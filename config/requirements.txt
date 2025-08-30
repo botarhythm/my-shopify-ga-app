@@ -1,0 +1,23 @@
+# 既存の依存関係
+google-analytics-data==0.18.0
+google-auth
+google-auth-oauthlib
+google-auth-httplib2==0.2.0
+pandas==2.2.3
+ShopifyAPI==12.3.0
+requests
+python-dotenv
+streamlit==1.37.1
+plotly==5.23.0
+squareup==40.1.0.220250220
+
+# Google Ads統合用の新しい依存関係
+google-ads==28.0.0
+numpy
+pydantic
+altair
+tenacity
+
+# 依存関係の競合を解決
+protobuf==6.32.0
+PyYAML

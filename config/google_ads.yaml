@@ -1,0 +1,111 @@
+# Google Ads Configuration
+# Customer IDs and GAQL presets
+
+# Customer configuration
+customer:
+  # Target customer ID (required)
+  customer_id: "${GOOGLE_ADS_CUSTOMER_ID}"
+  
+  # Login customer ID (if using manager account)
+  login_customer_id: "${GOOGLE_ADS_LOGIN_CUSTOMER_ID}"
+  
+  # Developer token (from Google Ads API)
+  developer_token: "${GOOGLE_ADS_DEVELOPER_TOKEN}"
+
+# API configuration
+api:
+  # Protobuf messages configuration
+  use_proto_plus: true
+  
+  # Test account configuration
+  test_account: true
+  
+  # Logging configuration
+  logging:
+    level: "INFO"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Date range defaults
+date_range:
+  default_days: 90
+  max_days: 365
+  timezone: "Asia/Tokyo"
+
+# GAQL query presets
+queries:
+  campaign:
+    fields:
+      - "segments.date"
+      - "campaign.id"
+      - "campaign.name"
+      - "metrics.impressions"
+      - "metrics.clicks"
+      - "metrics.ctr"
+      - "metrics.cost_micros"
+      - "metrics.average_cpc"
+      - "metrics.conversions"
+      - "metrics.conversions_value"
+  
+  ad_group:
+    fields:
+      - "segments.date"
+      - "campaign.id"
+      - "campaign.name"
+      - "ad_group.id"
+      - "ad_group.name"
+      - "metrics.impressions"
+      - "metrics.clicks"
+      - "metrics.ctr"
+      - "metrics.cost_micros"
+      - "metrics.average_cpc"
+      - "metrics.conversions"
+      - "metrics.conversions_value"
+  
+  keyword:
+    fields:
+      - "segments.date"
+      - "campaign.id"
+      - "campaign.name"
+      - "ad_group.id"
+      - "ad_group.name"
+      - "ad_group_criterion.keyword.text"
+      - "metrics.impressions"
+      - "metrics.clicks"
+      - "metrics.ctr"
+      - "metrics.cost_micros"
+      - "metrics.average_cpc"
+      - "metrics.conversions"
+      - "metrics.conversions_value"
+
+# Attribution settings
+attribution:
+  # Campaign name mapping file
+  campaign_mapping_file: "config/ads_campaign_name_map.csv"
+  
+  # UTM parameter mapping
+  utm_mapping:
+    source: "utm_source"
+    medium: "utm_medium"
+    campaign: "utm_campaign"
+    content: "utm_content"
+    term: "utm_term"
+  
+  # Default attribution rules
+  default_rules:
+    - source: "google"
+      medium: "cpc"
+      campaign: "google_ads"
+
+# Performance thresholds
+thresholds:
+  roas_min: 2.0
+  cpa_max: 5000
+  cpc_max: 500
+  ctr_min: 0.01
+
+# UI settings
+ui:
+  default_granularity: "daily"
+  default_level: "campaign"
+  cache_ttl: 300  # seconds
+  max_rows_display: 1000
