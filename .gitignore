@@ -91,3 +91,8 @@ coverage.xml
 .dmypy.json
 dmypy.json
 
+# OAuth認証情報
+data/raw/client_secret_*.json
+data/raw/token.pickle
+*.pickle
+
