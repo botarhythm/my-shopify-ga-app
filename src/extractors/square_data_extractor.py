@@ -15,7 +15,6 @@ import os
 import pandas as pd
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from square.client import Client
 
 # 環境変数を読み込み
 load_dotenv()
@@ -30,18 +29,22 @@ def get_square_client():
     if not SQUARE_ACCESS_TOKEN:
         raise ValueError("SQUARE_ACCESS_TOKEN環境変数が設定されていません。")
     
-    return Client(
-        access_token=SQUARE_ACCESS_TOKEN,  # 正しい認証方法
-        environment=SQUARE_ENVIRONMENT
-    )
+    try:
+        from square.client import Client
+        return Client(
+            access_token=SQUARE_ACCESS_TOKEN,
+            environment=SQUARE_ENVIRONMENT
+        )
+    except ImportError:
+        raise ImportError("squareupライブラリがインストールされていません。")
 
 def get_square_payments():
     """Squareから決済データを取得します。"""
     print("決済データを取得中...")
     
-    # 過去30日の期間を設定
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=30)
+    # 8月の期間を設定
+    start_date = datetime(2025, 8, 1)
+    end_date = datetime(2025, 8, 31)
     
     # ISO 8601形式の日時文字列
     start_date_str = start_date.strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -98,21 +101,28 @@ def process_payments_data(payments):
             'receipt_number': payment.get('receipt_number'),
             'order_id': payment.get('order_id'),
             'reference_id': payment.get('reference_id'),
-            'customer_id': payment.get('customer_id'),
+            'payment_method': payment.get('source_type'),
             'location_id': payment.get('location_id'),
-            'source_type': payment.get('source_type'),
-            'card_details_card_brand': card.get('card_brand') if isinstance(card, dict) else None,
-            'card_details_card_last_4': card.get('last_4') if isinstance(card, dict) else None,
-            'card_details_entry_method': card_details.get('entry_method') if isinstance(card_details, dict) else None,
-            'card_details_status': card_details.get('status') if isinstance(card_details, dict) else None,
-            'refunded_money_amount': refunded_money.get('amount') if isinstance(refunded_money, dict) else None,
-            'refunded_money_currency': refunded_money.get('currency') if isinstance(refunded_money, dict) else None,
-            'processing_fee_amount': processing_fee.get('amount') if isinstance(processing_fee, dict) else None,
-            'processing_fee_currency': processing_fee.get('currency') if isinstance(processing_fee, dict) else None,
+            'merchant_id': payment.get('merchant_id'),
+            'customer_id': payment.get('customer_id'),
             'total_money_amount': total_money.get('amount') if isinstance(total_money, dict) else None,
             'total_money_currency': total_money.get('currency') if isinstance(total_money, dict) else None,
             'approved_money_amount': approved_money.get('amount') if isinstance(approved_money, dict) else None,
             'approved_money_currency': approved_money.get('currency') if isinstance(approved_money, dict) else None,
+            'processing_fee_amount': processing_fee.get('amount') if isinstance(processing_fee, dict) else None,
+            'processing_fee_currency': processing_fee.get('currency') if isinstance(processing_fee, dict) else None,
+            'refunded_money_amount': refunded_money.get('amount') if isinstance(refunded_money, dict) else None,
+            'refunded_money_currency': refunded_money.get('currency') if isinstance(refunded_money, dict) else None,
+            'tip_money_amount': payment.get('tip_money', {}).get('amount') if isinstance(payment.get('tip_money'), dict) else None,
+            'tip_money_currency': payment.get('tip_money', {}).get('currency') if isinstance(payment.get('tip_money'), dict) else None,
+            'card_brand': card.get('card_brand'),
+            'card_last_4': card.get('last_4'),
+            'card_exp_month': card.get('exp_month'),
+            'card_exp_year': card.get('exp_year'),
+            'card_type': card.get('card_type'),
+            'entry_method': card_details.get('entry_method'),
+            'receipt_url': payment.get('receipt_url'),
+            'note': payment.get('note')
         }
         
         processed_payments.append(payment_data)
@@ -120,72 +130,72 @@ def process_payments_data(payments):
     return pd.DataFrame(processed_payments)
 
 def main():
-    """メイン処理を実行します。"""
+    """メイン実行関数"""
     print("Square決済データ取得を開始します...")
     
+    # 環境変数チェック
+    if not SQUARE_ACCESS_TOKEN:
+        print("❌ SQUARE_ACCESS_TOKEN環境変数が設定されていません")
+        print("以下のコマンドで環境変数を設定してください:")
+        print("set SQUARE_ACCESS_TOKEN=your_access_token_here")
+        return
+    
+    if not SQUARE_LOCATION_ID:
+        print("❌ SQUARE_LOCATION_ID環境変数が設定されていません")
+        print("以下のコマンドで環境変数を設定してください:")
+        print("set SQUARE_LOCATION_ID=your_location_id_here")
+        return
+    
     try:
-        # 環境変数の確認
-        if not SQUARE_ACCESS_TOKEN:
-            print("エラー: SQUARE_ACCESS_TOKEN環境変数が設定されていません。")
-            print("以下のコマンドで環境変数を設定してください:")
-            print("set SQUARE_ACCESS_TOKEN=your_access_token_here")
-            print("set SQUARE_LOCATION_ID=your_location_id_here")
-            return
-        
-        if not SQUARE_LOCATION_ID:
-            print("エラー: SQUARE_LOCATION_ID環境変数が設定されていません。")
-            print("以下のコマンドで環境変数を設定してください:")
-            print("set SQUARE_LOCATION_ID=your_location_id_here")
-            return
-        
-        print(f"環境: {SQUARE_ENVIRONMENT}")
-        print(f"ロケーションID: {SQUARE_LOCATION_ID}")
-        
-        # データ取得
+        # 実際のAPIからデータを取得
         payments = get_square_payments()
         
         if not payments:
-            print("決済データの取得に失敗しました。")
+            print("❌ 決済データの取得に失敗しました")
             return
         
-        # データ処理
-        print("\nデータを処理中...")
+        # データを処理
+        df = process_payments_data(payments)
         
-        payments_df = process_payments_data(payments)
-        if not payments_df.empty:
-            # 決済データをCSV出力
-            payments_filename = f"square_payments_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            payments_df.to_csv(payments_filename, index=False, encoding='utf-8-sig')
-            print(f"決済データを {payments_filename} に保存しました。")
-            print(f"決済データ件数: {len(payments_df)}")
-            
-            # 基本統計情報を表示
-            print("\n基本統計情報:")
-            if 'amount_money_amount' in payments_df.columns:
-                total_amount = payments_df['amount_money_amount'].sum()
-                currency = payments_df['amount_money_currency'].iloc[0] if not payments_df.empty else 'USD'
-                print(f"総決済額: {total_amount:,.0f} {currency}")
-                print(f"平均決済額: {payments_df['amount_money_amount'].mean():,.0f} {currency}")
-            
-            # ステータス別集計
-            if 'status' in payments_df.columns:
-                status_summary = payments_df['status'].value_counts()
-                print("\nステータス別集計:")
-                print(status_summary)
-            
-            # カードブランド別集計
-            if 'card_details_card_brand' in payments_df.columns:
-                brand_summary = payments_df['card_details_card_brand'].value_counts()
-                print("\nカードブランド別集計:")
-                print(brand_summary)
-            
-            print("\n決済データのプレビュー:")
-            print(payments_df.head())
+        if df.empty:
+            print("❌ データ処理に失敗しました")
+            return
         
-        print("\nデータ取得が完了しました。")
+        # CSVファイルとして保存
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f'square_payments_{timestamp}.csv'
+        filepath = os.path.join('data', 'raw', filename)
+        
+        df.to_csv(filepath, index=False, encoding='utf-8')
+        print(f"✅ 決済データを {filename} に保存しました")
+        print(f"データ件数: {len(df)}")
+        
+        # 基本統計情報を表示
+        print("\n📊 基本統計情報:")
+        if 'amount_money_amount' in df.columns:
+            total_amount = df['amount_money_amount'].sum()
+            currency = df['amount_money_currency'].iloc[0] if not df.empty else 'JPY'
+            print(f"総決済額: {total_amount:,.0f} {currency}")
+            print(f"平均決済額: {df['amount_money_amount'].mean():,.0f} {currency}")
+        
+        # ステータス別集計
+        if 'status' in df.columns:
+            status_summary = df['status'].value_counts()
+            print("\n📈 ステータス別集計:")
+            print(status_summary)
+        
+        # 決済方法別集計
+        if 'payment_method' in df.columns:
+            method_summary = df['payment_method'].value_counts()
+            print("\n💳 決済方法別集計:")
+            print(method_summary)
+        
+        # データのプレビュー
+        print("\n決済データのプレビュー:")
+        print(df[['id', 'created_at', 'amount_money_amount', 'status', 'payment_method']].head())
         
     except Exception as e:
-        print(f"エラーが発生しました: {e}")
+        print(f"❌ データ取得に失敗しました: {e}")
         import traceback
         traceback.print_exc()
 
