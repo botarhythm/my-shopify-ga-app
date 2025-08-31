@@ -2,105 +2,219 @@
 # -*- coding: utf-8 -*-
 """
 Shopifyストア売上向上分析パイプライン
-3つのステップを順次実行し、包括的な分析と戦略提案を行います。
-
-実行手順:
-1. Shopify APIからデータ取得
-2. データ統合・分析
-3. 戦略提案
+複数のデータソースを統合して包括的な分析を実行します。
 """
 
 import os
 import sys
 import subprocess
-import time
+import pandas as pd
 from datetime import datetime
+from dotenv import load_dotenv
 
-def print_header(title):
-    """ヘッダーを表示します。"""
-    print("\n" + "="*60)
-    print(f" {title}")
-    print("="*60)
-
-def print_step(step_num, step_title):
-    """ステップの開始を表示します。"""
-    print(f"\n📋 ステップ {step_num}: {step_title}")
-    print("-" * 40)
+# 環境変数を読み込み
+load_dotenv()
 
 def check_environment():
     """実行環境をチェックします。"""
-    print_header("🔍 実行環境チェック")
+    print("=" * 60)
+    print(" 🔍 実行環境チェック")
+    print("=" * 60)
     
-    # 必要なファイルの存在確認
-    required_files = [
-        'src/extractors/ga4_data_extractor.py',
-        'src/extractors/shopify_data_extractor.py', 
-        'src/analysis/data_analyzer.py',
-        'src/analysis/strategy_proposer.py'
-    ]
+    # 必要なディレクトリの存在確認
+    required_dirs = ['data/raw', 'data/processed', 'data/reports']
+    missing_dirs = []
     
-    missing_files = []
-    for file in required_files:
-        if not os.path.exists(file):
-            missing_files.append(file)
+    for dir_path in required_dirs:
+        if not os.path.exists(dir_path):
+            missing_dirs.append(dir_path)
+            os.makedirs(dir_path, exist_ok=True)
     
-    if missing_files:
-        print(f"❌ 不足しているファイル: {missing_files}")
-        return False
+    if missing_dirs:
+        print(f"✅ 不足していたディレクトリを作成しました: {missing_dirs}")
+    else:
+        print("✅ 必要なファイルが揃っています")
     
-    print("✅ 必要なファイルが揃っています")
+    # 環境変数のチェック
+    missing_env_vars = []
     
-    # 環境変数の確認
-    shopify_token = os.getenv('SHOPIFY_API_TOKEN')
-    if not shopify_token:
-        print("⚠️  SHOPIFY_API_TOKEN環境変数が設定されていません")
-        print("   以下のコマンドで設定してください:")
-        print("   set SHOPIFY_API_TOKEN=your_api_token_here")
-        return False
+    if not os.getenv('SHOPIFY_API_TOKEN'):
+        missing_env_vars.append('SHOPIFY_API_TOKEN')
     
-    print("✅ Shopify APIトークンが設定されています")
-    return True
+    if not os.getenv('GA4_PROPERTY_ID'):
+        missing_env_vars.append('GA4_PROPERTY_ID')
+    
+    if not os.getenv('SQUARE_ACCESS_TOKEN'):
+        missing_env_vars.append('SQUARE_ACCESS_TOKEN')
+    
+    if not os.getenv('SQUARE_LOCATION_ID'):
+        missing_env_vars.append('SQUARE_LOCATION_ID')
+    
+    if missing_env_vars:
+        print(f"⚠️  以下の環境変数が設定されていません: {', '.join(missing_env_vars)}")
+        print("   既存のデータファイルを使用して分析を実行します")
+        return True  # 既存データで分析を続行
+    else:
+        print("✅ すべての環境変数が設定されています")
+        return True
 
-def run_script(script_name, description):
-    """Pythonスクリプトを実行します。"""
-    print(f"\n🚀 {description}を開始します...")
-    print(f"   実行スクリプト: {script_name}")
+def check_existing_data():
+    """既存のデータファイルをチェックします。"""
+    print("\n" + "=" * 60)
+    print(" 📊 既存データチェック")
+    print("=" * 60)
+    
+    raw_dir = "data/raw"
+    available_data = {}
+    
+    # Shopifyデータ
+    shopify_files = [f for f in os.listdir(raw_dir) if f.startswith("shopify_orders_202508")]
+    if shopify_files:
+        latest_shopify = max(shopify_files)
+        available_data['shopify'] = latest_shopify
+        print(f"✅ Shopifyデータ: {latest_shopify}")
+    else:
+        print("❌ Shopifyデータが見つかりません")
+    
+    # Squareデータ
+    square_files = [f for f in os.listdir(raw_dir) if f.startswith("square_payments_202508")]
+    if square_files:
+        latest_square = max(square_files)
+        available_data['square'] = latest_square
+        print(f"✅ Squareデータ: {latest_square}")
+    else:
+        print("❌ Squareデータが見つかりません")
+    
+    # GA4データ
+    ga4_files = [f for f in os.listdir(raw_dir) if f.startswith("ga4_data_2025-08-01_to_2025-08-31")]
+    if ga4_files:
+        latest_ga4 = max(ga4_files)
+        available_data['ga4'] = latest_ga4
+        print(f"✅ GA4データ: {latest_ga4}")
+    else:
+        print("❌ GA4データが見つかりません")
+    
+    # Google Adsデータ
+    ads_files = [f for f in os.listdir(raw_dir) if f.startswith("google_ads_")]
+    if ads_files:
+        latest_ads = max(ads_files)
+        available_data['ads'] = latest_ads
+        print(f"✅ Google Adsデータ: {latest_ads}")
+    else:
+        print("❌ Google Adsデータが見つかりません")
+    
+    return available_data
+
+def run_cross_analysis():
+    """クロス分析を実行します。"""
+    print("\n" + "=" * 60)
+    print(" 🔍 クロス分析実行")
+    print("=" * 60)
     
     try:
-        # スクリプトを実行
-        result = subprocess.run(
-            [sys.executable, script_name],
-            capture_output=True,
-            text=True,
-            encoding='utf-8'
-        )
+        # 直接スクリプトを実行
+        result = subprocess.run([
+            sys.executable, 
+            'src/analysis/cross_analysis_30days.py'
+        ], capture_output=True, text=True, encoding='utf-8')
         
         if result.returncode == 0:
-            print(f"✅ {description}が完了しました")
+            print("✅ クロス分析が完了しました")
             if result.stdout:
                 print("\n実行結果:")
                 print(result.stdout)
         else:
-            print(f"❌ {description}でエラーが発生しました")
+            print(f"❌ クロス分析でエラーが発生しました")
             if result.stderr:
-                print("\nエラー内容:")
-                print(result.stderr)
-            return False
-            
+                print(f"エラー内容: {result.stderr}")
     except Exception as e:
-        print(f"❌ スクリプト実行中にエラーが発生: {e}")
-        return False
-    
-    return True
+        print(f"❌ クロス分析でエラーが発生しました: {e}")
 
-def wait_for_user_input(message):
-    """ユーザーの入力を待ちます。"""
-    print(f"\n⏸️  {message}")
-    input("Enterキーを押して続行してください...")
+def run_complete_analysis():
+    """完全統合分析を実行します。"""
+    print("\n" + "=" * 60)
+    print(" 📊 完全統合分析実行")
+    print("=" * 60)
+    
+    try:
+        # 直接スクリプトを実行
+        result = subprocess.run([
+            sys.executable, 
+            'src/utils/analyze_august_complete_data.py'
+        ], capture_output=True, text=True, encoding='utf-8')
+        
+        if result.returncode == 0:
+            print("✅ 完全統合分析が完了しました")
+            if result.stdout:
+                print("\n実行結果:")
+                print(result.stdout)
+            return {'status': 'success'}
+        else:
+            print(f"❌ 完全統合分析でエラーが発生しました")
+            if result.stderr:
+                print(f"エラー内容: {result.stderr}")
+            return None
+    except Exception as e:
+        print(f"❌ 完全統合分析でエラーが発生しました: {e}")
+        return None
+
+def generate_summary_report(available_data, analysis_result):
+    """サマリーレポートを生成します。"""
+    print("\n" + "=" * 60)
+    print(" 📋 サマリーレポート生成")
+    print("=" * 60)
+    
+    report_content = f"""
+# 🎯 Shopifyストア売上向上分析パイプライン サマリーレポート
+生成日時: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}
+
+## 📊 利用可能データ
+"""
+    
+    for data_type, filename in available_data.items():
+        report_content += f"- **{data_type.upper()}**: {filename}\n"
+    
+    if analysis_result:
+        report_content += f"""
+## 📈 分析結果サマリー
+- **分析ステータス**: {analysis_result.get('status', 'N/A')}
+
+## 📁 生成されたレポート
+- クロス分析レポート: data/reports/cross_analysis_30days_*.md
+- 完全統合分析レポート: data/reports/august_complete_analysis_*.md
+"""
+    
+    report_content += f"""
+## 🎯 次のステップ
+1. **環境変数設定**: 実際のAPIデータ取得のための認証情報設定
+2. **リアルタイム分析**: より詳細なクロス分析の実行
+3. **ダッシュボード更新**: Streamlitアプリでの最新データ表示
+4. **戦略提案**: データに基づくビジネス戦略の提案
+
+## 📊 データ概要
+- **Shopify**: オンライン売上データ
+- **Square**: 実店舗決済データ
+- **GA4**: Webサイトアクセス分析データ
+- **Google Ads**: 広告キャンペーンデータ
+
+---
+*このレポートは自動生成されました*
+"""
+    
+    # レポート保存
+    report_filename = f"data/reports/pipeline_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    os.makedirs("data/reports", exist_ok=True)
+    
+    with open(report_filename, 'w', encoding='utf-8') as f:
+        f.write(report_content)
+    
+    print(f"✅ サマリーレポートを {report_filename} に保存しました")
 
 def main():
-    """メインパイプラインを実行します。"""
-    print_header("🎯 Shopifyストア売上向上分析パイプライン")
+    """メイン処理を実行します。"""
+    print("=" * 60)
+    print(" 🎯 Shopifyストア売上向上分析パイプライン")
+    print("=" * 60)
     print(f"開始時刻: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
     
     # 環境チェック
@@ -109,79 +223,34 @@ def main():
         print("必要な設定を行ってから再実行してください。")
         return
     
-    print("\n✅ 環境チェックが完了しました")
+    # 既存データチェック
+    available_data = check_existing_data()
     
-    # ステップ1: Shopifyデータ取得
-    print_step(1, "Shopify APIからデータ取得")
-    print("注文データと商品データを取得します")
-    
-    if not run_script('src/extractors/shopify_data_extractor.py', 'Shopifyデータ取得'):
-        print("\n❌ Shopifyデータ取得に失敗しました。")
-        print("APIトークンやネットワーク接続を確認してください。")
+    if not available_data:
+        print("\n❌ 分析可能なデータが見つかりません。")
+        print("データ取得を先に実行してください。")
         return
     
-    wait_for_user_input("Shopifyデータ取得が完了しました。次のステップに進みますか？")
+    # クロス分析実行
+    run_cross_analysis()
     
-    # ステップ2: データ統合・分析
-    print_step(2, "データ統合・分析")
-    print("ShopifyデータとGoogle Analyticsデータを統合・分析します")
+    # 完全統合分析実行
+    analysis_result = run_complete_analysis()
     
-    if not run_script('src/analysis/data_analyzer.py', 'データ統合・分析'):
-        print("\n❌ データ統合・分析に失敗しました。")
-        print("必要なCSVファイルが存在するか確認してください。")
-        return
+    # サマリーレポート生成
+    generate_summary_report(available_data, analysis_result)
     
-    wait_for_user_input("データ統合・分析が完了しました。次のステップに進みますか？")
-    
-    # ステップ3: 戦略提案
-    print_step(3, "戦略提案")
-    print("分析結果を基に売上向上施策を提案します")
-    
-    if not run_script('src/analysis/strategy_proposer.py', '戦略提案'):
-        print("\n❌ 戦略提案に失敗しました。")
-        print("分析レポートファイルが存在するか確認してください。")
-        return
-    
-    # 完了メッセージ
-    print_header("🎉 パイプライン完了")
-    print("すべてのステップが正常に完了しました！")
-    print("\n📁 生成されたファイル:")
-    
-    # 生成されたファイルを一覧表示
-    generated_files = []
-    for file in os.listdir('data/raw'):
-        if any(file.startswith(prefix) for prefix in [
-            'shopify_orders_', 'shopify_products_'
-        ]):
-            generated_files.append(f"data/raw/{file}")
-    
-    for file in os.listdir('data/reports'):
-        if any(file.startswith(prefix) for prefix in [
-            'analysis_report_', 'analysis_charts_', 'strategy_report_'
-        ]):
-            generated_files.append(f"data/reports/{file}")
-    
-    if generated_files:
-        for file in sorted(generated_files):
-            print(f"   📄 {file}")
-    else:
-        print("   生成されたファイルが見つかりません")
-    
-    print("\n📊 次のステップ:")
-    print("1. 生成されたレポートファイルを確認")
-    print("2. 優先度の高い施策から実行")
-    print("3. 定期的にデータを更新して効果を測定")
-    
-    print(f"\n完了時刻: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
+    print("\n" + "=" * 60)
+    print(" ✅ 分析パイプラインが完了しました")
+    print("=" * 60)
+    print("📊 生成されたレポートを確認してください:")
+    print("   - data/reports/ ディレクトリ内のファイル")
+    print("\n🎯 次のアクション:")
+    print("   1. 環境変数を設定して実際のAPIデータを取得")
+    print("   2. Streamlitダッシュボードで結果を確認")
+    print("   3. ビジネス戦略の検討")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\n⏹️  パイプラインが中断されました")
-        print("必要に応じて個別のスクリプトを実行してください")
-    except Exception as e:
-        print(f"\n\n❌ 予期しないエラーが発生しました: {e}")
-        print("エラーの詳細を確認し、必要に応じて個別のスクリプトを実行してください")
+    main()
 
 
