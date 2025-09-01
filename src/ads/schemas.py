@@ -337,7 +337,7 @@ def validate_dataframe(df: pd.DataFrame, level: str) -> pd.DataFrame:
 if __name__ == "__main__":
     # Test schema validation
     test_data = {
-        "date": "2025-08-30",
+        "date": "2025-08-31",
         "campaign_id": "123456789",
         "campaign_name": "Test Campaign",
         "impressions": 1000,

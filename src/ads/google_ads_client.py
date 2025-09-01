@@ -83,6 +83,7 @@ class GoogleAdsClientFactory:
         
         if missing_vars:
             logger.error(f"Missing required environment variables: {missing_vars}")
+            logger.info("MCCベーシックアカウントでも同じ認証情報が必要です")
             return False
         
         return True
@@ -171,6 +172,16 @@ class GoogleAdsClientFactory:
             login_customer_id = os.getenv("GOOGLE_ADS_LOGIN_CUSTOMER_ID")
         
         return login_customer_id if login_customer_id else None
+    
+    def is_basic_mcc(self) -> bool:
+        """Check if this is a basic MCC account"""
+        return self.config.get("api", {}).get("mcc_account_type") == "basic"
+    
+    def get_mcc_restrictions(self) -> Dict[str, Any]:
+        """Get MCC basic account restrictions"""
+        if self.is_basic_mcc():
+            return self.config.get("api", {}).get("basic_mcc_restrictions", {})
+        return {}
 
 
 def create_google_ads_client(config_path: str = "config/google_ads.yaml") -> GoogleAdsClient:

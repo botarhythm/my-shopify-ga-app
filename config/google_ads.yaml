@@ -17,8 +17,18 @@ api:
   # Protobuf messages configuration
   use_proto_plus: true
   
-  # Test account configuration
+  # Test account configuration (MCCベーシック対応)
   test_account: true
+  
+  # MCC account type (basic/standard)
+  mcc_account_type: "basic"
+  
+  # API access level restrictions for basic MCC
+  basic_mcc_restrictions:
+    # Basic MCCでは一部の高度な機能が制限される
+    advanced_features_disabled: true
+    # APIリクエスト頻度制限
+    rate_limit_conservative: true
   
   # Logging configuration
   logging:

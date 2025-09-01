@@ -34,6 +34,7 @@ class GoogleAdsDataFetcher:
         self.query_builder = GAQLQueryBuilder(config_path)
         self.client: Optional[GoogleAdsClient] = None
         self.customer_id: Optional[str] = None
+        self.client_factory: Optional['GoogleAdsClientFactory'] = None
     
     def _get_client(self) -> GoogleAdsClient:
         """Get or create Google Ads client"""
@@ -42,50 +43,195 @@ class GoogleAdsDataFetcher:
                 self.client = create_google_ads_client(self.config_path)
                 # Get customer ID from client factory
                 from src.ads.google_ads_client import GoogleAdsClientFactory
-                factory = GoogleAdsClientFactory(self.config_path)
-                self.customer_id = factory.get_customer_id()
-                logger.info(f"Google Ads client created for customer: {self.customer_id}")
+                self.client_factory = GoogleAdsClientFactory(self.config_path)
+                self.customer_id = self.client_factory.get_customer_id()
+                
+                # MCCベーシック対応のログ出力
+                if self.client_factory.is_basic_mcc():
+                    logger.info(f"MCCベーシックアカウントでGoogle Ads client作成: {self.customer_id}")
+                    restrictions = self.client_factory.get_mcc_restrictions()
+                    if restrictions.get("rate_limit_conservative"):
+                        logger.info("MCCベーシック: APIリクエスト頻度を制限します")
+                else:
+                    logger.info(f"Google Ads client created for customer: {self.customer_id}")
             except Exception as e:
                 logger.error(f"Failed to create Google Ads client: {e}")
                 raise
         
         return self.client
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
-        reraise=True
-    )
+    def _get_retry_strategy(self):
+        """Get retry strategy based on MCC account type"""
+        if self.client_factory and self.client_factory.is_basic_mcc():
+            restrictions = self.client_factory.get_mcc_restrictions()
+            if restrictions.get("rate_limit_conservative"):
+                # MCCベーシック: より控えめなリトライ戦略
+                return retry(
+                    stop=stop_after_attempt(2),
+                    wait=wait_exponential(multiplier=2, min=8, max=20),
+                    reraise=True
+                )
+        
+        # 標準のリトライ戦略
+        return retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            reraise=True
+        )
+    
     def _execute_query(self, query: str, customer_id: str) -> List[Dict]:
         """Execute GAQL query with retry logic"""
+        # MCCベーシック対応: 動的にリトライ戦略を適用
+        retry_strategy = self._get_retry_strategy()
+        
+        @retry_strategy
+        def _execute_with_retry():
+            try:
+                client = self._get_client()
+                ga_service = client.get_service("GoogleAdsService")
+                
+                # MCCベーシック対応: リクエスト前の待機時間
+                if self.client_factory and self.client_factory.is_basic_mcc():
+                    restrictions = self.client_factory.get_mcc_restrictions()
+                    if restrictions.get("rate_limit_conservative"):
+                        import time
+                        time.sleep(1)  # 1秒待機
+                
+                logger.debug(f"Executing query for customer {customer_id}")
+                response = ga_service.search(customer_id=customer_id, query=query)
+                
+                # Convert response to list of dictionaries
+                results = []
+                for row in response:
+                    row_dict = {}
+                    
+                    # Google Ads API v21の新しい構造に対応
+                    try:
+                        # キャンペーン情報
+                        if hasattr(row, 'campaign') and row.campaign:
+                            campaign = row.campaign
+                            if hasattr(campaign, 'id') and campaign.id:
+                                row_dict['campaign.id'] = campaign.id
+                            if hasattr(campaign, 'name') and campaign.name:
+                                row_dict['campaign.name'] = campaign.name
+                        
+                        # セグメント情報（日付など）
+                        if hasattr(row, 'segments') and row.segments:
+                            segments = row.segments
+                            if hasattr(segments, 'date') and segments.date:
+                                row_dict['segments.date'] = segments.date
+                        
+                        # メトリクス情報
+                        if hasattr(row, 'metrics') and row.metrics:
+                            metrics = row.metrics
+                            if hasattr(metrics, 'impressions') and metrics.impressions:
+                                row_dict['metrics.impressions'] = metrics.impressions
+                            if hasattr(metrics, 'clicks') and metrics.clicks:
+                                row_dict['metrics.clicks'] = metrics.clicks
+                            if hasattr(metrics, 'cost_micros') and metrics.cost_micros:
+                                row_dict['metrics.cost_micros'] = metrics.cost_micros
+                            if hasattr(metrics, 'ctr') and metrics.ctr:
+                                row_dict['metrics.ctr'] = metrics.ctr
+                            if hasattr(metrics, 'average_cpc') and metrics.average_cpc:
+                                row_dict['metrics.average_cpc'] = metrics.average_cpc
+                            if hasattr(metrics, 'conversions') and metrics.conversions:
+                                row_dict['metrics.conversions'] = metrics.conversions
+                            if hasattr(metrics, 'conversions_value') and metrics.conversions_value:
+                                row_dict['metrics.conversions_value'] = metrics.conversions_value
+                        
+                        # 広告グループ情報（広告グループデータの場合）
+                        if hasattr(row, 'ad_group') and row.ad_group:
+                            ad_group = row.ad_group
+                            if hasattr(ad_group, 'id') and ad_group.id:
+                                row_dict['ad_group.id'] = ad_group.id
+                            if hasattr(ad_group, 'name') and ad_group.name:
+                                row_dict['ad_group.name'] = ad_group.name
+                        
+                        # キーワード情報（キーワードデータの場合）
+                        if hasattr(row, 'ad_group_criterion') and row.ad_group_criterion:
+                            criterion = row.ad_group_criterion
+                            if hasattr(criterion, 'keyword') and criterion.keyword:
+                                keyword = criterion.keyword
+                                if hasattr(keyword, 'text') and keyword.text:
+                                    row_dict['ad_group_criterion.keyword.text'] = keyword.text
+                    
+                    except Exception as e:
+                        logger.warning(f"行の処理中にエラー: {e}")
+                        # フォールバック：基本的な属性のみ取得
+                        try:
+                            for attr_name in dir(row):
+                                if not attr_name.startswith('_'):
+                                    try:
+                                        value = getattr(row, attr_name)
+                                        if hasattr(value, 'value'):
+                                            row_dict[attr_name] = value.value
+                                        else:
+                                            row_dict[attr_name] = value
+                                    except:
+                                        continue
+                        except:
+                            logger.error(f"フォールバック処理も失敗: {e}")
+                            row_dict = {'error': str(e)}
+                    
+                    results.append(row_dict)
+                
+                account_type = "MCCベーシック" if (self.client_factory and self.client_factory.is_basic_mcc()) else "標準"
+                logger.info(f"Query executed successfully ({account_type}), returned {len(results)} rows")
+                return results
+                
+            except GoogleAdsException as e:
+                logger.error(f"Google Ads API error: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"Error executing query: {e}")
+                raise
+        
+        return _execute_with_retry()
+    
+    def _clean_campaign_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """キャンペーンデータのクリーニングと前処理"""
+        if df.empty:
+            return df
+        
         try:
-            client = self._get_client()
-            ga_service = client.get_service("GoogleAdsService")
+            # campaign_idを文字列に変換
+            if 'campaign_id' in df.columns:
+                df['campaign_id'] = df['campaign_id'].astype(str)
             
-            logger.debug(f"Executing query for customer {customer_id}")
-            response = ga_service.search(customer_id=customer_id, query=query)
+            # 数値フィールドのNaNを0に置換
+            numeric_columns = ['impressions', 'clicks', 'cost_micros', 'conversions', 'conversion_value']
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = df[col].fillna(0)
+                    df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-            # Convert response to list of dictionaries
-            results = []
-            for row in response:
-                row_dict = {}
-                for field in row._fields:
-                    value = getattr(row, field)
-                    if hasattr(value, 'value'):
-                        row_dict[field] = value.value
-                    else:
-                        row_dict[field] = value
-                results.append(row_dict)
+            # CTRの計算（clicks / impressions）
+            if 'impressions' in df.columns and 'clicks' in df.columns:
+                df['ctr'] = df.apply(
+                    lambda row: (row['clicks'] / row['impressions'] * 100) if row['impressions'] > 0 else 0, 
+                    axis=1
+                )
             
-            logger.info(f"Query executed successfully, returned {len(results)} rows")
-            return results
+            # 平均CPCの計算（cost_micros / clicks / 1000000）
+            if 'cost_micros' in df.columns and 'clicks' in df.columns:
+                df['avg_cpc'] = df.apply(
+                    lambda row: (row['cost_micros'] / row['clicks'] / 1000000) if row['clicks'] > 0 else 0, 
+                    axis=1
+                )
             
-        except GoogleAdsException as e:
-            logger.error(f"Google Ads API error: {e}")
-            raise
+            # 日付の標準化（文字列形式に戻す）
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'], errors='coerce')
+                df = df.dropna(subset=['date'])
+                # スキーマ検証用に文字列形式に戻す
+                df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+            
+            logger.info(f"データクリーニング完了: {len(df)}行")
+            return df
+            
         except Exception as e:
-            logger.error(f"Error executing query: {e}")
-            raise
+            logger.error(f"データクリーニング中にエラー: {e}")
+            return df
     
     def fetch_campaign_data(self, start_date: str, end_date: str) -> pd.DataFrame:
         """Fetch campaign level data"""
@@ -120,6 +266,9 @@ class GoogleAdsDataFetcher:
             }
             
             df = df.rename(columns=column_mapping)
+            
+            # データ前処理とクリーニング
+            df = self._clean_campaign_data(df)
             
             # Validate data
             df = validate_dataframe(df, "campaign")

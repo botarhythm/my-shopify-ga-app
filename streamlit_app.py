@@ -32,6 +32,48 @@ st.set_page_config(
 
 # ユーティリティ -----------------------------------------------------------
 
+def validate_date_range(df, expected_start, expected_end):
+    """
+    データの日付範囲を検証し、期待される期間と一致しない場合に警告を表示します。
+    
+    Args:
+        df (pd.DataFrame): 検証するデータフレーム
+        expected_start (str): 期待される開始日
+        expected_end (str): 期待される終了日
+    
+    Returns:
+        bool: 期間が一致するかどうか
+    """
+    if df is None or df.empty or 'date' not in df.columns:
+        return False
+    
+    actual_start = df['date'].min()
+    actual_end = df['date'].max()
+    
+    expected_start_dt = pd.to_datetime(expected_start)
+    expected_end_dt = pd.to_datetime(expected_end)
+    
+    if actual_start != expected_start_dt or actual_end != expected_end_dt:
+        st.warning(f"""
+        ⚠️ **期間の不一致を検出しました**
+        
+        **期待される期間**: {expected_start} 〜 {expected_end}
+        **実際のデータ期間**: {actual_start.strftime('%Y-%m-%d')} 〜 {actual_end.strftime('%Y-%m-%d')}
+        
+        この問題は以下の原因が考えられます：
+        - GA4データに欠損日付が存在する
+        - データ抽出時の設定が不正確
+        - 実際のデータが期待される期間に存在しない
+        
+        **推奨アクション**:
+        1. GA4データ抽出スクリプトを再実行
+        2. データ補完機能を使用
+        3. 期間設定を見直す
+        """)
+        return False
+    
+    return True
+
 def find_latest_csv(pattern: str) -> str | None:
     """最新のCSVファイルを検索"""
     files = glob.glob(pattern)
@@ -55,9 +97,9 @@ def load_google_ads_data(start_date: str, end_date: str) -> dict:
         cache_dir = "data/ads/cache"
         data = {}
         
-        # フィクスチャデータの日付範囲を調整（2025-08-01_2025-08-30）
+        # フィクスチャデータの日付範囲を調整（2025-08-01_2025-08-31）
         fixture_start = "2025-08-01"
-        fixture_end = "2025-08-30"
+        fixture_end = "2025-08-31"
         
         # キャンペーンデータ
         campaign_file = os.path.join(cache_dir, f"campaign_{fixture_start}_{fixture_end}.parquet")
@@ -348,6 +390,15 @@ products_df = load_csv(latest_products)
 ga4_df = load_csv(latest_ga4)
 square_df = load_csv(latest_square)
 
+# 期間検証（8月1日〜8月31日）
+if not ga4_df.empty:
+    try:
+        from src.utils.period_validator import st_validate_period
+        st_validate_period(ga4_df, "august_2025", "ga4")
+    except ImportError:
+        # フォールバック: 元の検証関数
+        validate_date_range(ga4_df, "2025-08-01", "2025-08-31")
+
 # データ状態の表示
 with st.sidebar:
     st.caption("📁 検出されたファイル")
@@ -406,19 +457,105 @@ st.sidebar.header("🔍 フィルタ")
 if not ga4_df.empty:
     date_min = ga4_df['date'].min()
     date_max = ga4_df['date'].max()
-    default_range = (date_min, date_max)
     
     # 現在のデータ期間を表示
     st.sidebar.info(f"**データ期間**: {date_min.date()} 〜 {date_max.date()}")
     
-    date_range = st.sidebar.date_input(
-        "📅 分析期間選択", 
-        value=default_range, 
-        min_value=date_min.date(), 
-        max_value=date_max.date(),
-        help="分析したい期間を選択してください"
-    )
+    # 現在の日付を取得（デバッグ情報で使用するため先に定義）
+    today = datetime.now().date()
     
+    # デバッグ情報（開発時のみ表示）
+    if st.sidebar.checkbox("🔍 デバッグ情報を表示", help="期間選択のデバッグ情報を表示します"):
+        st.sidebar.write("**現在のセッション状態**:")
+        if 'selected_date_range' in st.session_state:
+            st.sidebar.write(f"- selected_date_range: {st.session_state['selected_date_range']}")
+        else:
+            st.sidebar.write("- selected_date_range: 未設定")
+        st.sidebar.write(f"- 今日の日付: {today}")
+    
+    # デフォルト期間選択ボタン
+    st.sidebar.subheader("📅 期間選択")
+    
+    # デフォルト期間ボタン
+    col1, col2 = st.sidebar.columns(2)
+    
+    with col1:
+        if st.sidebar.button("📅 過去7日間", help="過去7日間のデータを分析"):
+            end_date = today
+            start_date = end_date - timedelta(days=6)
+            st.session_state['selected_date_range'] = (start_date, end_date)
+            st.sidebar.success(f"✅ 過去7日間を選択: {start_date} 〜 {end_date}")
+            st.rerun()
+        
+        if st.sidebar.button("📅 過去30日間", help="過去30日間のデータを分析"):
+            end_date = today
+            start_date = end_date - timedelta(days=29)
+            st.session_state['selected_date_range'] = (start_date, end_date)
+            st.sidebar.success(f"✅ 過去30日間を選択: {start_date} 〜 {end_date}")
+            st.rerun()
+    
+    with col2:
+        if st.sidebar.button("📅 今月", help="今月1日から本日までのデータを分析"):
+            end_date = today
+            start_date = today.replace(day=1)
+            st.session_state['selected_date_range'] = (start_date, end_date)
+            st.sidebar.success(f"✅ 今月を選択: {start_date} 〜 {end_date}")
+            st.rerun()
+        
+        if st.sidebar.button("📅 今年", help="今年1月1日から本日までのデータを分析"):
+            end_date = today
+            start_date = today.replace(month=1, day=1)
+            st.session_state['selected_date_range'] = (start_date, end_date)
+            st.sidebar.success(f"✅ 今年を選択: {start_date} 〜 {end_date}")
+            st.rerun()
+    
+    # カスタム期間選択
+    st.sidebar.markdown("---")
+    
+    # 常に最新データ期間を使用（デフォルト設定を削除）
+    current_data_range = (date_min.date(), date_max.date())
+    
+    # セッション状態から期間を取得、または最新データ期間を使用
+    if 'selected_date_range' in st.session_state and st.session_state['selected_date_range']:
+        # 選択された期間がデータ範囲内かチェック
+        selected_start, selected_end = st.session_state['selected_date_range']
+        if (selected_start >= date_min.date() and selected_end <= date_max.date()):
+            # データ範囲内の場合は選択された期間を使用
+            custom_date_range = st.sidebar.date_input(
+                "📅 カスタム期間選択", 
+                value=st.session_state['selected_date_range'], 
+                min_value=date_min.date(), 
+                max_value=date_max.date(),
+                help="分析したい期間をカスタムで選択してください"
+            )
+            # カスタム期間が変更された場合のみセッション状態を更新
+            if custom_date_range != st.session_state['selected_date_range']:
+                st.session_state['selected_date_range'] = custom_date_range
+                st.rerun()
+            date_range = st.session_state['selected_date_range']
+        else:
+            # データ範囲外の場合は最新データ期間を使用
+            st.sidebar.warning("⚠️ 選択された期間がデータ範囲外です。最新データ期間に更新します。")
+            st.session_state['selected_date_range'] = current_data_range
+            date_range = st.sidebar.date_input(
+                "📅 カスタム期間選択", 
+                value=current_data_range, 
+                min_value=date_min.date(), 
+                max_value=date_max.date(),
+                help="分析したい期間をカスタムで選択してください"
+            )
+    else:
+        # 初回アクセス時は最新データ期間を使用
+        st.session_state['selected_date_range'] = current_data_range
+        date_range = st.sidebar.date_input(
+            "📅 カスタム期間選択", 
+            value=current_data_range, 
+            min_value=date_min.date(), 
+            max_value=date_max.date(),
+            help="分析したい期間をカスタムで選択してください"
+        )
+    
+    # 選択された期間を処理
     if isinstance(date_range, tuple) and len(date_range) == 2:
         start_date, end_date = date_range
         mask = (ga4_df['date'] >= pd.to_datetime(start_date)) & (ga4_df['date'] <= pd.to_datetime(end_date))
@@ -433,6 +570,9 @@ if not ga4_df.empty:
         last_year_end = end_date.replace(year=end_date.year - 1)
         st.sidebar.info(f"**昨年同期**: {last_year_start} 〜 {last_year_end}")
         
+        # セッション状態を更新
+        st.session_state['selected_date_range'] = date_range
+        
     else:
         start_date = date_range
         end_date = date_range
@@ -445,9 +585,116 @@ if not ga4_df.empty:
         # 昨年同日の表示
         last_year_date = start_date.replace(year=start_date.year - 1)
         st.sidebar.info(f"**昨年同日**: {last_year_date}")
+        
+        # セッション状態を更新
+        st.session_state['selected_date_range'] = (start_date, start_date)
 else:
     ga4_df_filtered = ga4_df
     st.sidebar.info("GA4データが不足しています")
+
+# 最新データ取得機能
+st.sidebar.header("🔄 データ更新")
+if st.sidebar.button("🔄 最新データ取得", help="最新のデータを取得して分析期間を更新します"):
+    # 最新のCSVファイルを再検出
+    latest_orders = find_latest_csv("data/raw/shopify_orders_*.csv")
+    latest_products = find_latest_csv("data/raw/shopify_products_*.csv")
+    latest_ga4 = find_latest_csv("data/raw/ga4_data_*.csv")
+    latest_square = find_latest_csv("data/raw/square_payments_*.csv")
+    
+    # データを再読み込み
+    orders_df = load_csv(latest_orders)
+    products_df = load_csv(latest_products)
+    ga4_df = load_csv(latest_ga4)
+    square_df = load_csv(latest_square)
+    
+    # セッション状態を更新
+    st.session_state['orders_df'] = orders_df
+    st.session_state['products_df'] = products_df
+    st.session_state['ga4_df'] = ga4_df
+    st.session_state['square_df'] = square_df
+    st.session_state['latest_files'] = {
+        'orders': latest_orders,
+        'products': latest_products,
+        'ga4': latest_ga4,
+        'square': latest_square
+    }
+    
+    # 分析期間を最新データ期間に更新
+    if not ga4_df.empty and 'date' in ga4_df.columns:
+        try:
+            ga4_df['date'] = pd.to_datetime(ga4_df['date'])
+            date_min = ga4_df['date'].min()
+            date_max = ga4_df['date'].max()
+            st.session_state['selected_date_range'] = (date_min.date(), date_max.date())
+            st.sidebar.success("✅ 最新データを取得し、分析期間を更新しました")
+        except Exception as e:
+            st.sidebar.error(f"❌ データ更新エラー: {e}")
+    else:
+        st.sidebar.warning("⚠️ 最新のGA4データが見つかりません")
+    
+    st.rerun()
+
+# 自動データ更新機能
+if st.sidebar.checkbox("🔄 自動データ更新", help="新しいデータファイルを自動検出して更新します"):
+    # 現在のファイル情報と新しいファイル情報を比較
+    current_files = st.session_state.get('latest_files', {})
+    new_files = {
+        'orders': find_latest_csv("data/raw/shopify_orders_*.csv"),
+        'products': find_latest_csv("data/raw/shopify_products_*.csv"),
+        'ga4': find_latest_csv("data/raw/ga4_data_*.csv"),
+        'square': find_latest_csv("data/raw/square_payments_*.csv")
+    }
+    
+    # ファイルが更新されたかチェック
+    files_updated = False
+    for key in new_files:
+        if new_files[key] != current_files.get(key):
+            files_updated = True
+            break
+    
+    if files_updated:
+        st.sidebar.info("🔄 新しいデータファイルを検出しました。自動更新中...")
+        # 自動更新処理
+        orders_df = load_csv(new_files['orders'])
+        products_df = load_csv(new_files['products'])
+        ga4_df = load_csv(new_files['ga4'])
+        square_df = load_csv(new_files['square'])
+        
+        st.session_state['orders_df'] = orders_df
+        st.session_state['products_df'] = products_df
+        st.session_state['ga4_df'] = ga4_df
+        st.session_state['square_df'] = square_df
+        st.session_state['latest_files'] = new_files
+        
+        # 分析期間を最新データ期間に更新
+        if not ga4_df.empty and 'date' in ga4_df.columns:
+            try:
+                ga4_df['date'] = pd.to_datetime(ga4_df['date'])
+                date_min = ga4_df['date'].min()
+                date_max = ga4_df['date'].max()
+                st.session_state['selected_date_range'] = (date_min.date(), date_max.date())
+                st.sidebar.success("✅ 自動更新完了")
+            except Exception as e:
+                st.sidebar.error(f"❌ 自動更新エラー: {e}")
+        
+        st.rerun()
+
+# データ補完機能
+st.sidebar.header("🔧 データ管理")
+if st.sidebar.button("🔄 GA4データ補完実行", help="欠損日付のデータを0で補完します"):
+    if not ga4_df.empty:
+        # データ補完処理
+        from src.extractors.ga4_data_extractor import complete_date_range
+        ga4_df_completed = complete_date_range(ga4_df, "2025-08-01", "2025-08-31")
+        if ga4_df_completed is not None and len(ga4_df_completed) > len(ga4_df):
+            st.sidebar.success(f"✅ データ補完完了: {len(ga4_df)} → {len(ga4_df_completed)}行")
+            ga4_df = ga4_df_completed
+            ga4_df_filtered = ga4_df
+            st.rerun()
+        else:
+            st.sidebar.info("ℹ️ 補完は不要です（データは完全です）")
+    else:
+        st.sidebar.error("❌ GA4データがありません")
 
 # 流入元フィルタ
 if not ga4_df.empty:
@@ -468,50 +715,41 @@ st.subheader("📅 分析期間")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    if not ga4_df.empty and 'date' in ga4_df.columns:
-        current_start = ga4_df['date'].min().date()
-        current_end = ga4_df['date'].max().date()
-        st.info(f"**現在の分析期間**\n{current_start} 〜 {current_end}\n({(current_end - current_start).days + 1}日間)")
+    if 'selected_date_range' in st.session_state and st.session_state['selected_date_range']:
+        start_date, end_date = st.session_state['selected_date_range']
+        selected_days = (end_date - start_date).days + 1
+        st.success(f"**選択された分析期間**\n{start_date} 〜 {end_date}\n({selected_days}日間)")
     else:
-        st.info("**現在の分析期間**\nデータ不足")
+        st.info("**選択された分析期間**\n期間が選択されていません")
 
 with col2:
-    # 昨年同期間の計算（現在の期間から1年前）
-    if not ga4_df.empty and 'date' in ga4_df.columns:
-        current_start = ga4_df['date'].min().date()
-        current_end = ga4_df['date'].max().date()
-        
-        # 昨年同期間の開始日と終了日を計算
-        last_year_start = current_start.replace(year=current_start.year - 1)
-        last_year_end = current_end.replace(year=current_end.year - 1)
-        
-        st.info(f"**昨年同期間**\n{last_year_start} 〜 {last_year_end}\n({(last_year_end - last_year_start).days + 1}日間)")
+    # 昨年同期間の計算
+    if 'selected_date_range' in st.session_state and st.session_state['selected_date_range']:
+        start_date, end_date = st.session_state['selected_date_range']
+        last_year_start = start_date.replace(year=start_date.year - 1)
+        last_year_end = end_date.replace(year=end_date.year - 1)
+        last_year_days = (last_year_end - last_year_start).days + 1
+        st.info(f"**昨年同期間**\n{last_year_start} 〜 {last_year_end}\n({last_year_days}日間)")
     else:
-        st.info("**昨年同期間**\nデータ不足")
+        st.info("**昨年同期間**\n期間が選択されていません")
 
 with col3:
-    # 期間の比較情報
+    # データ期間の表示
     if not ga4_df.empty and 'date' in ga4_df.columns:
-        current_start = ga4_df['date'].min().date()
-        current_end = ga4_df['date'].max().date()
-        days_diff = (current_end - current_start).days + 1
-        
-        if days_diff == 30:
-            st.success(f"**期間タイプ**\n📊 月次分析\n📈 30日間のデータ")
-        elif days_diff == 7:
-            st.success(f"**期間タイプ**\n📊 週次分析\n📈 7日間のデータ")
-        else:
-            st.success(f"**期間タイプ**\n📊 カスタム期間\n📈 {days_diff}日間のデータ")
+        data_start = ga4_df['date'].min().date()
+        data_end = ga4_df['date'].max().date()
+        data_days = (data_end - data_start).days + 1
+        st.info(f"**利用可能データ期間**\n{data_start} 〜 {data_end}\n({data_days}日間)")
     else:
-        st.success("**期間タイプ**\nデータ不足")
+        st.info("**利用可能データ期間**\nデータ不足")
 
 st.markdown("---")
 
 # Google Adsデータの読み込み（フィクスチャデータを常に読み込み）
-google_ads_data = load_google_ads_data("2025-08-01", "2025-08-30")
+google_ads_data = load_google_ads_data("2025-08-01", "2025-08-31")
 
 # タブ構造の作成
-tab1, tab2, tab3, tab4 = st.tabs(["📊 統合KPI", "📈 詳細分析", "🎯 Google Ads", "🔍 データ品質"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 統合KPI", "📈 詳細分析", "🎯 Google Ads", "🔍 GA4統合分析", "🔍 データ品質", "🔧 分析システム操作"])
 
 # 統合KPIタブ
 with tab1:
@@ -560,86 +798,85 @@ with tab1:
     st.sidebar.write(f"Square: ¥{last_year_total_square_amount:,.0f}")
     st.sidebar.write(f"セッション: {last_year_total_sessions:,}")
 
-    # KPIカード
-    col1, col2, col3, col4, col5 = st.columns(5)
-
-    # 昨年同期対比のデルタを計算
-    total_revenue_delta, total_revenue_color = calculate_yoy_delta(total_revenue, last_year_total_revenue, is_currency=True)
-    square_delta, square_color = calculate_yoy_delta(total_square_amount, last_year_total_square_amount, is_currency=True)
-    combined_revenue_delta, combined_revenue_color = calculate_yoy_delta(total_combined_revenue, last_year_total_combined_revenue, is_currency=True)
-    sessions_delta, sessions_color = calculate_yoy_delta(total_sessions, last_year_total_sessions, is_currency=False)
-    revenue_per_session_delta, revenue_per_session_color = calculate_yoy_delta(revenue_per_session, last_year_revenue_per_session, is_currency=True)
-
-    # デバッグ用：計算されたデルタを確認
-    st.sidebar.write("🔍 計算されたデルタ:")
-    st.sidebar.write(f"総売上: {combined_revenue_delta}")
-    st.sidebar.write(f"Shopify: {total_revenue_delta}")
-    st.sidebar.write(f"Square: {square_delta}")
-    st.sidebar.write(f"セッション: {sessions_delta}")
-    st.sidebar.write(f"売上/セッション: {revenue_per_session_delta}")
+    # KPIカード - カテゴリ別レイアウト
+    st.subheader("💰 売上系KPI")
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        # 総売上のKPIカード
+        # 総売上のKPIカード（内訳付き）
         delta_value = total_combined_revenue - last_year_total_combined_revenue
         delta_percentage = (delta_value / last_year_total_combined_revenue * 100) if last_year_total_combined_revenue > 0 else 0
-    
-    if delta_value > 0:
-        st.success(f"💰 **総売上**\n¥{total_combined_revenue:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
-    elif delta_value < 0:
-        st.error(f"💰 **総売上**\n¥{total_combined_revenue:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
-    else:
-        st.info(f"💰 **総売上**\n¥{total_combined_revenue:,.0f}\n➡️ 変化なし")
+        
+        if delta_value > 0:
+            st.success(f"💰 **総売上**\n¥{total_combined_revenue:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
+        elif delta_value < 0:
+            st.error(f"💰 **総売上**\n¥{total_combined_revenue:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
+        else:
+            st.info(f"💰 **総売上**\n¥{total_combined_revenue:,.0f}\n➡️ 変化なし")
+        
+        # 内訳表示
+        st.caption(f"内訳: Shopify ¥{total_revenue:,.0f} + Square ¥{total_square_amount:,.0f}")
 
     with col2:
         # Shopify売上のKPIカード
         delta_value = total_revenue - last_year_total_revenue
         delta_percentage = (delta_value / last_year_total_revenue * 100) if last_year_total_revenue > 0 else 0
-    
-    if delta_value > 0:
-        st.success(f"🛒 **Shopify売上**\n¥{total_revenue:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
-    elif delta_value < 0:
-        st.error(f"🛒 **Shopify売上**\n¥{total_revenue:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
-    else:
-        st.info(f"🛒 **Shopify売上**\n¥{total_revenue:,.0f}\n➡️ 変化なし")
+        
+        if delta_value > 0:
+            st.success(f"🛒 **Shopify売上**\n¥{total_revenue:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
+        elif delta_value < 0:
+            st.error(f"🛒 **Shopify売上**\n¥{total_revenue:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
+        else:
+            st.info(f"🛒 **Shopify売上**\n¥{total_revenue:,.0f}\n➡️ 変化なし")
+        
+        # 注文数も表示
+        st.caption(f"注文数: {order_count:,}件")
 
-with col3:
-    # Square決済のKPIカード
-    delta_value = total_square_amount - last_year_total_square_amount
-    delta_percentage = (delta_value / last_year_total_square_amount * 100) if last_year_total_square_amount > 0 else 0
-    
-    if delta_value > 0:
-        st.success(f"💳 **Square決済**\n¥{total_square_amount:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
-    elif delta_value < 0:
-        st.error(f"💳 **Square決済**\n¥{total_square_amount:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
-    else:
-        st.info(f"💳 **Square決済**\n¥{total_square_amount:,.0f}\n➡️ 変化なし")
+    with col3:
+        # Square決済のKPIカード
+        delta_value = total_square_amount - last_year_total_square_amount
+        delta_percentage = (delta_value / last_year_total_square_amount * 100) if last_year_total_square_amount > 0 else 0
+        
+        if delta_value > 0:
+            st.success(f"💳 **Square決済**\n¥{total_square_amount:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
+        elif delta_value < 0:
+            st.error(f"💳 **Square決済**\n¥{total_square_amount:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
+        else:
+            st.info(f"💳 **Square決済**\n¥{total_square_amount:,.0f}\n➡️ 変化なし")
+        
+        # 通貨情報も表示
+        st.caption(f"通貨: {square_currency}")
 
-with col4:
-    # 総セッションのKPIカード
-    delta_value = total_sessions - last_year_total_sessions
-    delta_percentage = (delta_value / last_year_total_sessions * 100) if last_year_total_sessions > 0 else 0
-    
-    if delta_value > 0:
-        st.success(f"📈 **総セッション**\n{total_sessions:,}\n📈 +{delta_value:,} (+{delta_percentage:.1f}%)")
-    elif delta_value < 0:
-        st.error(f"📈 **総セッション**\n{total_sessions:,}\n📉 {delta_value:,} ({delta_percentage:.1f}%)")
-    else:
-        st.info(f"📈 **総セッション**\n{total_sessions:,}\n➡️ 変化なし")
+    # トラフィック系KPI
+    st.subheader("📈 トラフィック系KPI")
+    col1, col2 = st.columns(2)
 
-with col5:
-    # 売上/セッションのKPIカード
-    delta_value = revenue_per_session - last_year_revenue_per_session
-    delta_percentage = (delta_value / last_year_revenue_per_session * 100) if last_year_revenue_per_session > 0 else 0
-    
-    if delta_value > 0:
-        st.success(f"📊 **売上/セッション**\n¥{revenue_per_session:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
-    elif delta_value < 0:
-        st.error(f"📊 **売上/セッション**\n¥{revenue_per_session:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
-    else:
-        st.info(f"📊 **売上/セッション**\n¥{revenue_per_session:,.0f}\n➡️ 変化なし")
+    with col1:
+        # 総セッションのKPIカード
+        delta_value = total_sessions - last_year_total_sessions
+        delta_percentage = (delta_value / last_year_total_sessions * 100) if last_year_total_sessions > 0 else 0
+        
+        if delta_value > 0:
+            st.success(f"📈 **総セッション**\n{total_sessions:,}\n📈 +{delta_value:,} (+{delta_percentage:.1f}%)")
+        elif delta_value < 0:
+            st.error(f"📈 **総セッション**\n{total_sessions:,}\n📉 {delta_value:,} ({delta_percentage:.1f}%)")
+        else:
+            st.info(f"📈 **総セッション**\n{total_sessions:,}\n➡️ 変化なし")
 
-# 総売上内訳の可視化
-st.subheader("💰 総売上内訳")
+    with col2:
+        # 売上/セッションのKPIカード（効率性指標）
+        delta_value = revenue_per_session - last_year_revenue_per_session
+        delta_percentage = (delta_value / last_year_revenue_per_session * 100) if last_year_revenue_per_session > 0 else 0
+        
+        if delta_value > 0:
+            st.success(f"📊 **売上/セッション**\n¥{revenue_per_session:,.0f}\n📈 +¥{delta_value:,.0f} (+{delta_percentage:.1f}%)")
+        elif delta_value < 0:
+            st.error(f"📊 **売上/セッション**\n¥{revenue_per_session:,.0f}\n📉 ¥{delta_value:,.0f} ({delta_percentage:.1f}%)")
+        else:
+            st.info(f"📊 **売上/セッション**\n¥{revenue_per_session:,.0f}\n➡️ 変化なし")
+
+# 総売上内訳の詳細表示
+st.subheader("💰 総売上内訳詳細")
 col1, col2 = st.columns(2)
 
 with col1:
@@ -658,10 +895,22 @@ with col1:
     fig_sales_breakdown.update_layout(height=400)
     st.plotly_chart(fig_sales_breakdown, use_container_width=True)
     
-    # 売上内訳のデータテーブル
+    # 売上内訳の詳細データテーブル
     sales_breakdown_df = pd.DataFrame([
-        {'売上源': 'Shopify', '売上（円）': total_revenue, '比率': f'{(total_revenue/total_combined_revenue*100):.1f}%'},
-        {'売上源': 'Square', '売上（円）': total_square_amount, '比率': f'{(total_square_amount/total_combined_revenue*100):.1f}%'}
+        {
+            '売上源': 'Shopify', 
+            '売上（円）': total_revenue, 
+            '比率': f'{(total_revenue/total_combined_revenue*100):.1f}%',
+            '昨年対比': f'{((total_revenue - last_year_total_revenue) / last_year_total_revenue * 100):+.1f}%' if last_year_total_revenue > 0 else 'N/A',
+            '注文数': f'{order_count:,}件'
+        },
+        {
+            '売上源': 'Square', 
+            '売上（円）': total_square_amount, 
+            '比率': f'{(total_square_amount/total_combined_revenue*100):.1f}%',
+            '昨年対比': f'{((total_square_amount - last_year_total_square_amount) / last_year_total_square_amount * 100):+.1f}%' if last_year_total_square_amount > 0 else 'N/A',
+            '通貨': square_currency
+        }
     ])
     
     st.dataframe(
@@ -674,7 +923,10 @@ with col1:
                 "売上（円）",
                 format="¥%d"
             ),
-            "比率": "比率"
+            "比率": "比率",
+            "昨年対比": "昨年対比",
+            "注文数": "注文数",
+            "通貨": "通貨"
         }
     )
 
@@ -728,8 +980,18 @@ with col2:
         }
     )
 
-# 売上サマリ
-st.info(f"💡 **売上サマリ**: Shopify（¥{total_revenue:,.0f}）+ Square（¥{total_square_amount:,.0f}）= 総売上 ¥{total_combined_revenue:,.0f}")
+# 売上サマリの詳細表示
+st.subheader("📋 売上サマリ")
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.info(f"💰 **総売上**: ¥{total_combined_revenue:,.0f}\n\n内訳:\n• Shopify: ¥{total_revenue:,.0f}\n• Square: ¥{total_square_amount:,.0f}")
+
+with col2:
+    st.info(f"📊 **売上構成比**:\n\n• Shopify: {(total_revenue/total_combined_revenue*100):.1f}%\n• Square: {(total_square_amount/total_combined_revenue*100):.1f}%")
+
+with col3:
+    st.info(f"📈 **昨年同期対比**:\n\n• 総売上: {((total_combined_revenue - last_year_total_combined_revenue) / last_year_total_combined_revenue * 100):+.1f}%\n• Shopify: {((total_revenue - last_year_total_revenue) / last_year_total_revenue * 100):+.1f}%\n• Square: {((total_square_amount - last_year_total_square_amount) / last_year_total_square_amount * 100):+.1f}%")
 
 # 昨年同期対比の説明
 st.info(f"💡 **昨年同期対比**: 現在期間（{ga4_df['date'].min().date() if not ga4_df.empty else 'N/A'} 〜 {ga4_df['date'].max().date() if not ga4_df.empty else 'N/A'}）と昨年同期間を比較。")
@@ -761,6 +1023,13 @@ with col3:
 
 # デバッグ情報（開発用 - 本番では削除可能）
 with st.expander("🔍 デバッグ情報 - 昨年同期対比計算"):
+    # デルタ計算
+    combined_revenue_delta = f"{((total_combined_revenue - last_year_total_combined_revenue) / last_year_total_combined_revenue * 100):+.1f}%" if last_year_total_combined_revenue > 0 else "N/A"
+    total_revenue_delta = f"{((total_revenue - last_year_total_revenue) / last_year_total_revenue * 100):+.1f}%" if last_year_total_revenue > 0 else "N/A"
+    square_delta = f"{((total_square_amount - last_year_total_square_amount) / last_year_total_square_amount * 100):+.1f}%" if last_year_total_square_amount > 0 else "N/A"
+    sessions_delta = f"{((total_sessions - last_year_total_sessions) / last_year_total_sessions * 100):+.1f}%" if last_year_total_sessions > 0 else "N/A"
+    revenue_per_session_delta = f"{((revenue_per_session - last_year_revenue_per_session) / last_year_revenue_per_session * 100):+.1f}%" if last_year_revenue_per_session > 0 else "N/A"
+    
     st.write("**現在値**:")
     st.write(f"- 総売上: ¥{total_combined_revenue:,.0f}")
     st.write(f"- Shopify売上: ¥{total_revenue:,.0f}")
@@ -1581,11 +1850,589 @@ with tab3:
     else:
         st.warning("⚠️ Google Adsデータが見つかりません")
         st.info("フィクスチャデータを生成するには以下のコマンドを実行してください:")
-        st.code("python src/ads/generate_fixtures.py --start 2025-08-01 --end 2025-08-30")
+        st.code("python src/ads/generate_fixtures.py --start 2025-08-01 --end 2025-08-31")
+
+# GA4統合分析タブ
+with tab4:
+    st.header("🔍 GA4統合分析")
+    st.info("> **注意**: この分析はGA4から取得可能な信頼性の高いデータのみを対象としています。\n> 売上データは実際の数値と異なる可能性があるため、トラフィックとユーザー行動に焦点を当てています。")
+    
+    # GA4統合分析レポートの読み込み
+    @st.cache_data(show_spinner=False)
+    def load_latest_ga4_integrated_report():
+        """最新のGA4統合分析レポートを読み込み"""
+        import glob
+        import os
+        from pathlib import Path
+        
+        reports_dir = Path("data/reports")
+        ga4_reports = list(reports_dir.glob("ga4_integrated_analysis_*.md"))
+        
+        if not ga4_reports:
+            return None
+        
+        # 最新のレポートを取得
+        latest_report = max(ga4_reports, key=lambda x: x.stat().st_mtime)
+        with open(latest_report, 'r', encoding='utf-8') as f:
+            return f.read()
+    
+    # GA4データの読み込み
+    @st.cache_data(show_spinner=False)
+    def load_ga4_data_for_integrated_analysis():
+        """GA4データを統合分析用に読み込み"""
+        import glob
+        import os
+        from pathlib import Path
+        
+        data_dir = Path("data/raw")
+        ga4_files = list(data_dir.glob("ga4_data_*.csv"))
+        
+        if not ga4_files:
+            return None
+        
+        # 最新のファイルを取得
+        latest_file = max(ga4_files, key=lambda x: x.stat().st_mtime)
+        df = pd.read_csv(latest_file)
+        return df
+    
+    # 統合分析の実行
+    def run_ga4_integrated_analysis():
+        """GA4統合分析を実行"""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["python", "src/analysis/ga4_integrated_analysis.py"],
+                capture_output=True,
+                text=True,
+                encoding='utf-8'
+            )
+            if result.returncode == 0:
+                return True, "✅ GA4統合分析が完了しました"
+            else:
+                return False, f"❌ 分析に失敗しました: {result.stderr}"
+        except Exception as e:
+            return False, f"❌ エラーが発生しました: {e}"
+    
+    # データ読み込み
+    ga4_report = load_latest_ga4_integrated_report()
+    ga4_df = load_ga4_data_for_integrated_analysis()
+    
+    # 分析実行ボタン
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if st.button("🚀 GA4統合分析を実行", type="primary"):
+            with st.spinner("GA4統合分析を実行中..."):
+                success, message = run_ga4_integrated_analysis()
+                if success:
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.error(message)
+    
+    with col2:
+        st.info("💡 **統合分析の特徴**: トラフィックパターン、ユーザー行動、コンバージョンファネル、ユーザーセグメントを包括的に分析")
+    
+    if ga4_df is not None:
+        # 主要指標の表示
+        st.subheader("📊 主要指標")
+        
+        # 基本統計の計算
+        total_sessions = ga4_df['sessions'].sum()
+        
+        # --- 総収益の計算を修正（重複排除） ---
+        # GA4データは同じセッション/トランザクションで複数回収益を計上する可能性があるため、
+        # 重複を避けるために、収益が発生した行を特定し、より正確な合計を試みる。
+        # ここでは、日付とソースでグループ化し、各グループの最大収益を取ることで、
+        # 同じ日の同じソースからの重複計上をある程度緩和する。
+        # ただし、GA4の生データ構造に依存するため、transaction_idがない場合は完璧な重複排除は困難。
+        revenue_df = ga4_df[ga4_df['totalRevenue'] > 0].copy()
+        if not revenue_df.empty:
+            # 日付とソースでグループ化し、各グループの最大収益を取得
+            # これにより、同じ日・同じソースからの複数ページビューでの重複計上を緩和
+            deduplicated_revenue = revenue_df.groupby(['date', 'source'])['totalRevenue'].max().sum()
+            total_revenue = deduplicated_revenue
+        else:
+            total_revenue = 0
+        # --- 修正ここまで ---
+        
+        avg_revenue_per_session = total_revenue / total_sessions if total_sessions > 0 else 0
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("総セッション数", f"{total_sessions:,}回")
+        with col2:
+            st.metric("総収益", f"¥{total_revenue:,.0f}")
+        with col3:
+            st.metric("セッション単価", f"¥{avg_revenue_per_session:,.0f}")
+        with col4:
+            st.metric("データ期間", f"{len(ga4_df['date'].unique())}日間")
+        
+        # デバッグ情報：重複排除の効果を表示
+        with st.expander("🔍 デバッグ情報 - 総収益計算の改善"):
+            original_revenue = ga4_df['totalRevenue'].sum()
+            improvement_percentage = ((original_revenue - total_revenue) / original_revenue * 100) if original_revenue > 0 else 0
+            
+            st.write("**修正前の計算**:")
+            st.write(f"- 単純合計: ¥{original_revenue:,.0f}")
+            st.write("**修正後の計算**:")
+            st.write(f"- 重複排除後: ¥{total_revenue:,.0f}")
+            st.write(f"- 改善効果: {improvement_percentage:.1f}%の削減")
+            st.write("**重複排除ロジック**:")
+            st.write("- 日付とソースでグループ化")
+            st.write("- 各グループの最大収益を採用")
+            st.write("- 同じ日の同じソースからの重複計上を緩和")
+        
+        # トラフィックソース分析
+        st.subheader("🎯 トラフィックソース分析")
+        
+        source_analysis = ga4_df.groupby('source').agg({
+            'sessions': 'sum',
+            'totalRevenue': 'sum'
+        }).sort_values('sessions', ascending=False)
+        
+        source_analysis['revenue_per_session'] = source_analysis['totalRevenue'] / source_analysis['sessions']
+        
+        # トラフィックソースチャート
+        fig_source = px.bar(
+            source_analysis.head(10),
+            x=source_analysis.head(10).index,
+            y='sessions',
+            title='トラフィックソース別セッション数',
+            labels={'sessions': 'セッション数', 'index': 'トラフィックソース'},
+            color='revenue_per_session',
+            color_continuous_scale='Blues'
+        )
+        fig_source.update_layout(height=400, xaxis_tickangle=-45)
+        st.plotly_chart(fig_source, use_container_width=True)
+        
+        # コンバージョンファネル分析
+        st.subheader("🔄 コンバージョンファネル")
+        
+        # 主要ページのセッション数
+        key_pages = {
+            'ホーム': ga4_df[ga4_df['pagePath'] == '/']['sessions_page'].sum(),
+            'コレクション': ga4_df[ga4_df['pagePath'].str.contains('/collections/', na=False)]['sessions_page'].sum(),
+            '商品': ga4_df[ga4_df['pagePath'].str.contains('/products/', na=False)]['sessions_page'].sum(),
+            'カート': ga4_df[ga4_df['pagePath'] == '/cart']['sessions_page'].sum(),
+            'チェックアウト': ga4_df[ga4_df['pagePath'].str.contains('/checkouts/', na=False)]['sessions_page'].sum()
+        }
+        
+        # ファネルチャート
+        funnel_data = pd.DataFrame({
+            'ステージ': list(key_pages.keys()),
+            'セッション数': list(key_pages.values())
+        })
+        
+        fig_funnel = px.funnel(
+            funnel_data,
+            x='セッション数',
+            y='ステージ',
+            title='コンバージョンファネル'
+        )
+        fig_funnel.update_layout(height=400)
+        st.plotly_chart(fig_funnel, use_container_width=True)
+        
+        # ページ分析
+        st.subheader("📄 ページ分析")
+        
+        # 人気ページTOP10
+        page_analysis = ga4_df.groupby('pagePath').agg({
+            'sessions_page': 'sum'
+        }).sort_values('sessions_page', ascending=False).head(10)
+        
+        fig_pages = px.bar(
+            page_analysis,
+            x=page_analysis.index,
+            y='sessions_page',
+            title='人気ページTOP10',
+            labels={'sessions_page': 'セッション数', 'index': 'ページ'},
+            color='sessions_page',
+            color_continuous_scale='Greens'
+        )
+        fig_pages.update_layout(height=400, xaxis_tickangle=-45)
+        st.plotly_chart(fig_pages, use_container_width=True)
+        
+        # 日別トレンド
+        st.subheader("📈 日別トレンド")
+        
+        daily_trend = ga4_df.groupby('date').agg({
+            'sessions': 'sum',
+            'totalRevenue': 'sum'
+        }).sort_index()
+        
+        fig_daily = px.line(
+            daily_trend,
+            x=daily_trend.index,
+            y=['sessions', 'totalRevenue'],
+            title='日別セッション数・収益トレンド',
+            labels={'value': '数値', 'variable': '指標', 'index': '日付'}
+        )
+        fig_daily.update_layout(height=400)
+        st.plotly_chart(fig_daily, use_container_width=True)
+        
+        # 統合分析レポートの表示
+        if ga4_report:
+            st.subheader("📋 統合分析レポート")
+            st.success("✅ GA4統合分析レポートが読み込まれました")
+            st.markdown(ga4_report)
+        else:
+            st.warning("⚠️ GA4統合分析レポートが見つかりません")
+            st.info("統合分析レポートを生成するには上記の「GA4統合分析を実行」ボタンをクリックしてください。")
+        
+    else:
+        st.warning("⚠️ GA4データが見つかりません")
+        st.info("GA4データを取得するには以下のコマンドを実行してください:")
+        st.code("python src/extractors/ga4_data_extractor.py")
 
 # データ品質タブ
-with tab4:
+with tab5:
     st.header("🔍 データ品質チェック")
     st.info("データ品質チェックコンテンツはここに表示されます。")
+
+# 分析システム操作タブ
+with tab6:
+    st.header("🔧 分析システム操作")
+    
+    # 分析システムの状態表示
+    st.subheader("📊 システム状態")
+    
+    # データファイルの状態チェック
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("**データファイル状態**")
+        
+        # 各データソースの状態をチェック
+        data_status = {}
+        
+        # Shopifyデータ
+        if latest_orders:
+            orders_size = os.path.getsize(latest_orders) / 1024  # KB
+            data_status["🛒 Shopify注文"] = f"✅ {orders_size:.1f}KB"
+        else:
+            data_status["🛒 Shopify注文"] = "❌ なし"
+        
+        # GA4データ
+        if latest_ga4:
+            ga4_size = os.path.getsize(latest_ga4) / 1024  # KB
+            data_status["📈 GA4データ"] = f"✅ {ga4_size:.1f}KB"
+        else:
+            data_status["📈 GA4データ"] = "❌ なし"
+        
+        # Squareデータ
+        if latest_square:
+            square_size = os.path.getsize(latest_square) / 1024  # KB
+            data_status["💳 Square決済"] = f"✅ {square_size:.1f}KB"
+        else:
+            data_status["💳 Square決済"] = "❌ なし"
+        
+        # Google Adsデータ
+        ads_cache_dir = "data/ads/cache"
+        if os.path.exists(ads_cache_dir):
+            ads_files = [f for f in os.listdir(ads_cache_dir) if f.endswith('.parquet')]
+            if ads_files:
+                data_status["🎯 Google Ads"] = f"✅ {len(ads_files)}ファイル"
+            else:
+                data_status["🎯 Google Ads"] = "⚠️ キャッシュなし"
+        else:
+            data_status["🎯 Google Ads"] = "❌ ディレクトリなし"
+        
+        # 状態を表示
+        for source, status in data_status.items():
+            st.write(f"{source}: {status}")
+    
+    with col2:
+        st.info("**分析レポート状態**")
+        
+        # レポートファイルの状態をチェック
+        reports_dir = "data/reports"
+        if os.path.exists(reports_dir):
+            report_files = [f for f in os.listdir(reports_dir) if f.endswith('.md')]
+            recent_reports = [f for f in report_files if '20250901' in f]  # 今日のレポート
+            
+            st.write(f"📄 総レポート数: {len(report_files)}")
+            st.write(f"📅 今日のレポート: {len(recent_reports)}")
+            
+            if recent_reports:
+                st.write("**最新レポート:**")
+                for report in recent_reports[:5]:  # 最新5件
+                    st.write(f"• {report}")
+        else:
+            st.write("❌ レポートディレクトリなし")
+    
+    st.markdown("---")
+    
+    # データ収集・分析操作
+    st.subheader("🚀 データ収集・分析操作")
+    
+    # 操作カテゴリ
+    operation_category = st.selectbox(
+        "操作カテゴリを選択",
+        ["データ収集", "データ分析", "レポート生成", "システム管理"]
+    )
+    
+    if operation_category == "データ収集":
+        st.info("📥 データ収集操作")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**GA4データ収集**")
+            if st.button("📈 GA4データを収集"):
+                st.info("GA4データを収集中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/extractors/ga4_data_extractor.py"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ GA4データ収集が完了しました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ GA4データ収集に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+            
+            st.write("**Google Adsフィクスチャ生成**")
+            if st.button("🎯 Google Adsフィクスチャを生成"):
+                st.info("Google Adsフィクスチャを生成中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/ads/generate_fixtures.py", "--start", "2025-08-01", "--end", "2025-08-31"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ Google Adsフィクスチャが生成されました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ フィクスチャ生成に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+        
+        with col2:
+            st.write("**データ補完**")
+            if st.button("🔧 データ補完を実行"):
+                st.info("データ補完を実行中...")
+                if not ga4_df.empty:
+                    try:
+                        from src.extractors.ga4_data_extractor import complete_date_range
+                        ga4_df_completed = complete_date_range(ga4_df, "2025-08-01", "2025-08-31")
+                        if ga4_df_completed is not None and len(ga4_df_completed) > len(ga4_df):
+                            st.success(f"✅ データ補完完了: {len(ga4_df)} → {len(ga4_df_completed)}行")
+                            st.rerun()
+                        else:
+                            st.info("ℹ️ 補完は不要です（データは完全です）")
+                    except Exception as e:
+                        st.error(f"❌ データ補完に失敗しました: {e}")
+                else:
+                    st.error("❌ GA4データがありません")
+    
+    elif operation_category == "データ分析":
+        st.info("📊 データ分析操作")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**クロス分析**")
+            if st.button("🔍 クロス分析を実行"):
+                st.info("クロス分析を実行中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/analysis/cross_analysis_30days.py"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ クロス分析が完了しました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ クロス分析に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+            
+            st.write("**GA4統合分析**")
+            if st.button("📈 GA4統合分析を実行"):
+                st.info("GA4統合分析を実行中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/analysis/ga4_unified_analysis.py"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ GA4統合分析が完了しました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ GA4統合分析に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+        
+        with col2:
+            st.write("**戦略的洞察**")
+            if st.button("🎯 戦略的洞察を生成"):
+                st.info("戦略的洞察を生成中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/analysis/ga4_strategic_insights.py"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ 戦略的洞察が生成されました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ 戦略的洞察の生成に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+            
+            st.write("**データ分析**")
+            if st.button("📊 データ分析を実行"):
+                st.info("データ分析を実行中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/analysis/data_analyzer.py"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ データ分析が完了しました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ データ分析に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+    
+    elif operation_category == "レポート生成":
+        st.info("📋 レポート生成操作")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**包括的分析パイプライン**")
+            if st.button("🚀 包括的分析パイプラインを実行"):
+                st.info("包括的分析パイプラインを実行中...")
+                import subprocess
+                try:
+                    result = subprocess.run(
+                        ["python", "src/analysis/run_analysis_pipeline.py", "--start-date", "2025-08-01", "--end-date", "2025-08-31"],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8'
+                    )
+                    if result.returncode == 0:
+                        st.success("✅ 包括的分析パイプラインが完了しました")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ パイプライン実行に失敗しました: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ エラーが発生しました: {e}")
+            
+            st.write("**レポート一覧表示**")
+            if st.button("📄 レポート一覧を表示"):
+                reports_dir = "data/reports"
+                if os.path.exists(reports_dir):
+                    report_files = [f for f in os.listdir(reports_dir) if f.endswith('.md')]
+                    if report_files:
+                        st.write("**生成済みレポート:**")
+                        for report in sorted(report_files, reverse=True)[:10]:  # 最新10件
+                            st.write(f"• {report}")
+                    else:
+                        st.warning("レポートファイルが見つかりません")
+                else:
+                    st.error("レポートディレクトリが存在しません")
+        
+        with col2:
+            st.write("**レポートダウンロード**")
+            st.info("レポートファイルは `data/reports/` ディレクトリに保存されています")
+            
+            # 最新レポートのダウンロードリンク
+            reports_dir = "data/reports"
+            if os.path.exists(reports_dir):
+                report_files = [f for f in os.listdir(reports_dir) if f.endswith('.md')]
+                if report_files:
+                    latest_report = max(report_files, key=lambda x: os.path.getctime(os.path.join(reports_dir, x)))
+                    report_path = os.path.join(reports_dir, latest_report)
+                    
+                    with open(report_path, 'r', encoding='utf-8') as f:
+                        report_content = f.read()
+                    
+                    st.download_button(
+                        label="📥 最新レポートをダウンロード",
+                        data=report_content,
+                        file_name=latest_report,
+                        mime="text/markdown"
+                    )
+    
+    elif operation_category == "システム管理":
+        st.info("⚙️ システム管理操作")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**キャッシュクリア**")
+            if st.button("🗑️ キャッシュをクリア"):
+                st.info("キャッシュをクリア中...")
+                try:
+                    # Streamlitキャッシュをクリア
+                    st.cache_data.clear()
+                    st.success("✅ Streamlitキャッシュがクリアされました")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ キャッシュクリアに失敗しました: {e}")
+            
+            st.write("**データ再読み込み**")
+            if st.button("🔄 データを再読み込み"):
+                st.info("データを再読み込み中...")
+                st.rerun()
+        
+        with col2:
+            st.write("**システム情報**")
+            import sys
+            st.write(f"**Python バージョン**: {sys.version}")
+            st.write(f"**Streamlit バージョン**: {st.__version__}")
+            st.write(f"**Pandas バージョン**: {pd.__version__}")
+            
+            # ディスク使用量
+            import shutil
+            total, used, free = shutil.disk_usage(".")
+            st.write(f"**ディスク使用量**: {used // (1024**3):.1f}GB / {total // (1024**3):.1f}GB")
+    
+    st.markdown("---")
+    
+    # ログ表示
+    st.subheader("📝 システムログ")
+    
+    # ログファイルの表示
+    logs_dir = "logs"
+    if os.path.exists(logs_dir):
+        log_files = [f for f in os.listdir(logs_dir) if f.endswith('.log')]
+        if log_files:
+            selected_log = st.selectbox("ログファイルを選択", log_files)
+            if selected_log:
+                log_path = os.path.join(logs_dir, selected_log)
+                try:
+                    with open(log_path, 'r', encoding='utf-8') as f:
+                        log_content = f.read()
+                    st.text_area("ログ内容", log_content, height=300)
+                except Exception as e:
+                    st.error(f"ログファイルの読み込みに失敗しました: {e}")
+        else:
+            st.info("ログファイルが見つかりません")
+    else:
+        st.info("ログディレクトリが存在しません")
 
 

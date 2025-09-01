@@ -14,7 +14,6 @@ pip install -r requirements.txt
 import os
 import json
 import pandas as pd
-import random
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
@@ -23,51 +22,11 @@ load_dotenv()
 
 # 設定
 SCOPES = ['https://www.googleapis.com/auth/analytics.readonly']
-CREDENTIALS_FILE = 'client_secret_159450887000-7ic0t1o3jef858l192rodo6fju1b62qf.apps.googleusercontent.com.json'
-TOKEN_FILE = 'token.pickle'
+CREDENTIALS_FILE = 'data/raw/client_secret_159450887000-7ic0t1o3jef858l192rodo6fju1b62qf.apps.googleusercontent.com.json'
+TOKEN_FILE = 'data/raw/token.pickle'
 GA4_PROPERTY_ID = os.getenv('GA4_PROPERTY_ID', '315830165')
 
-def generate_ga4_fixtures():
-    """GA4データのフィクスチャを生成します。"""
-    print("GA4データのフィクスチャを生成中...")
-    
-    # 8月の期間設定
-    start_date = datetime(2025, 8, 1)
-    end_date = datetime(2025, 8, 31)
-    
-    data = []
-    current_date = start_date
-    
-    while current_date <= end_date:
-        # 1日あたりのランダムなデータを生成
-        daily_sessions = random.randint(50, 200)
-        daily_revenue = random.randint(5000, 25000)
-        
-        # ソース別のデータを生成
-        sources = ['google', 'direct', 'facebook', 'instagram', 'twitter']
-        source_weights = [0.4, 0.3, 0.15, 0.1, 0.05]  # 重み付け
-        
-        for _ in range(random.randint(3, 8)):  # 1日あたり3-8ソース
-            source = random.choices(sources, weights=source_weights)[0]
-            sessions = random.randint(5, daily_sessions // 3)
-            revenue = random.randint(500, daily_revenue // 3)
-            session_duration = random.randint(60, 300)
-            bounce_rate = random.uniform(0.3, 0.7)
-            
-            data.append({
-                'date': current_date.strftime('%Y%m%d'),
-                'source': source,
-                'sessions': sessions,
-                'totalRevenue': revenue,
-                'averageSessionDuration': session_duration,
-                'bounceRate': bounce_rate,
-                'pagePath': random.choice(['/', '/products', '/about', '/contact', '/blog']),
-                'searchTerm': random.choice(['coffee', 'beans', 'brewing', 'espresso', '(not set)'])
-            })
-        
-        current_date += timedelta(days=1)
-    
-    return data
+
 
 def authenticate_google_analytics():
     """
@@ -157,6 +116,24 @@ def get_ga4_data(property_id, start_date, end_date):
             ]
         )
         
+        # セッション品質データ（互換性のため最小限の組み合わせ）
+        session_quality_request = RunReportRequest(
+            property=f"properties/{property_id}",
+            date_ranges=[
+                DateRange(
+                    start_date=start_date,
+                    end_date=end_date
+                )
+            ],
+            metrics=[
+                Metric(name="sessions")
+            ],
+            dimensions=[
+                Dimension(name="date"),
+                Dimension(name="source")
+            ]
+        )
+        
         # ページ別データ
         page_request = RunReportRequest(
             property=f"properties/{property_id}",
@@ -167,9 +144,7 @@ def get_ga4_data(property_id, start_date, end_date):
                 )
             ],
             metrics=[
-                Metric(name="sessions"),
-                Metric(name="averageSessionDuration"),
-                Metric(name="bounceRate")
+                Metric(name="sessions")
             ],
             dimensions=[
                 Dimension(name="date"),
@@ -213,6 +188,8 @@ def get_ga4_data(property_id, start_date, end_date):
         
     except Exception as e:
         print(f"データ取得中にエラーが発生しました: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 def parse_ga4_response(response):
@@ -256,7 +233,56 @@ def parse_ga4_response(response):
     
     return df
 
-def merge_ga4_data(responses):
+def complete_date_range(df, start_date, end_date):
+    """
+    指定された期間で欠損日付を0で補完します。
+    
+    Args:
+        df (pd.DataFrame): 元のデータフレーム
+        start_date (str): 開始日 (YYYY-MM-DD形式)
+        end_date (str): 終了日 (YYYY-MM-DD形式)
+    
+    Returns:
+        pd.DataFrame: 補完されたデータフレーム
+    """
+    if df is None or df.empty:
+        return df
+    
+    # 日付範囲を生成
+    date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+    
+    # 既存の日付を確認
+    existing_dates = pd.to_datetime(df['date']).dt.date.unique()
+    missing_dates = [d.date() for d in date_range if d.date() not in existing_dates]
+    
+    if missing_dates:
+        print(f"⚠️  欠損日付を検出: {missing_dates}")
+        print(f"   指定期間: {start_date} 〜 {end_date}")
+        print(f"   実際のデータ: {min(existing_dates)} 〜 {max(existing_dates)}")
+        
+        # 欠損日付のデータを作成（0で補完）
+        missing_data = []
+        for missing_date in missing_dates:
+            # 各ソースに対して0データを作成
+            sources = df['source'].unique() if 'source' in df.columns else ['(direct)']
+            for source in sources:
+                missing_row = {
+                    'date': missing_date,
+                    'source': source,
+                    'sessions': '0',
+                    'totalRevenue': '0'
+                }
+                missing_data.append(missing_row)
+        
+        # 欠損データを追加
+        missing_df = pd.DataFrame(missing_data)
+        df = pd.concat([df, missing_df], ignore_index=True)
+        
+        print(f"✅ 欠損日付を補完しました: {len(missing_dates)}日分")
+    
+    return df
+
+def merge_ga4_data(responses, start_date=None, end_date=None):
     """
     複数のGA4レスポンスを統合します。
     
@@ -276,17 +302,18 @@ def merge_ga4_data(responses):
     
     # 基本データをベースに統合
     if basic_df is not None and not basic_df.empty:
+        
+        # 日付範囲の補完（指定された期間で欠損日付を0で補完）
+        if start_date and end_date:
+            basic_df = complete_date_range(basic_df, start_date, end_date)
+        
         # 日付とソースでグループ化してページデータを統合
         if page_df is not None and not page_df.empty:
             # 数値列を数値型に変換
             page_df['sessions'] = pd.to_numeric(page_df['sessions'], errors='coerce')
-            page_df['averageSessionDuration'] = pd.to_numeric(page_df['averageSessionDuration'], errors='coerce')
-            page_df['bounceRate'] = pd.to_numeric(page_df['bounceRate'], errors='coerce')
             
             page_agg = page_df.groupby(['date', 'pagePath']).agg({
-                'sessions': 'sum',
-                'averageSessionDuration': 'mean',
-                'bounceRate': 'mean'
+                'sessions': 'sum'
             }).reset_index()
             
             # 基本データにページ情報を追加
@@ -335,39 +362,9 @@ def main():
     # 認証ファイルの存在確認
     if not os.path.exists(CREDENTIALS_FILE):
         print(f"❌ 認証ファイル {CREDENTIALS_FILE} が見つかりません")
-        print("フィクスチャデータを生成します...")
-        
-        # フィクスチャデータを生成
-        fixture_data = generate_ga4_fixtures()
-        df = pd.DataFrame(fixture_data)
-        
-        # CSVファイルとして保存
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'ga4_data_2025-08-01_to_2025-08-31_{timestamp}.csv'
-        filepath = os.path.join('data', 'raw', filename)
-        
-        df.to_csv(filepath, index=False, encoding='utf-8')
-        print(f"✅ フィクスチャデータを {filename} に保存しました")
-        print(f"データ件数: {len(df)}")
-        
-        # 基本統計情報を表示
-        print("\n📊 フィクスチャデータ統計:")
-        print(f"総セッション数: {df['sessions'].sum():,}")
-        print(f"総収益: ¥{df['totalRevenue'].sum():,}")
-        print(f"平均セッション数: {df['sessions'].mean():.2f}")
-        print(f"平均滞在時間: {df['averageSessionDuration'].mean():.2f}秒")
-        print(f"平均直帰率: {df['bounceRate'].mean():.2f}%")
-        
-        # ソース別の集計
-        print("\n📈 ソース別集計:")
-        source_summary = df.groupby('source').agg({
-            'sessions': 'sum',
-            'totalRevenue': 'sum',
-            'averageSessionDuration': 'mean',
-            'bounceRate': 'mean'
-        }).sort_values('sessions', ascending=False)
-        print(source_summary)
-        
+        print("実際のGA4 APIデータを取得するには、認証ファイルが必要です。")
+        print("Google Cloud ConsoleでOAuth 2.0クライアントIDを作成し、")
+        print("client_secret_*.jsonファイルをdata/raw/ディレクトリに配置してください。")
         return
     
     try:
@@ -378,14 +375,12 @@ def main():
         if responses:
             # データをDataFrameに変換
             print("データを処理中...")
-            df = merge_ga4_data(responses)
+            df = merge_ga4_data(responses, start_date_str, end_date_str)
             
             if df is not None and not df.empty:
                 # データ型を適切に設定
                 df['sessions'] = pd.to_numeric(df['sessions'], errors='coerce')
                 df['totalRevenue'] = pd.to_numeric(df['totalRevenue'], errors='coerce')
-                df['averageSessionDuration'] = pd.to_numeric(df['averageSessionDuration'], errors='coerce')
-                df['bounceRate'] = pd.to_numeric(df['bounceRate'], errors='coerce')
                 
                 # 日付を適切な形式に変換
                 df['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
@@ -418,56 +413,29 @@ def main():
                 print(f"総収益: ¥{total_revenue:,.0f}")
                 print(f"平均収益: ¥{df['totalRevenue'].mean():,.0f}")
                 print(f"平均セッション数: {df['sessions'].mean():.2f}")
-                print(f"平均滞在時間: {df['averageSessionDuration'].mean():.2f}秒")
-                print(f"平均直帰率: {df['bounceRate'].mean():.2f}%")
                 
                 # ソース別の集計
                 print("\nソース別集計:")
                 source_summary = df.groupby('source').agg({
                     'sessions': 'sum',
-                    'totalRevenue': 'sum',
-                    'averageSessionDuration': 'mean',
-                    'bounceRate': 'mean'
+                    'totalRevenue': 'sum'
                 }).sort_values('sessions', ascending=False)
                 
                 print(source_summary)
                 
             else:
-                print("取得したデータが空です。フィクスチャデータを生成します...")
-                fixture_data = generate_ga4_fixtures()
-                df = pd.DataFrame(fixture_data)
+                print("❌ 取得したデータが空です")
+                print("GA4プロパティにデータが存在しないか、権限が不足している可能性があります。")
                 
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f'ga4_data_2025-08-01_to_2025-08-31_{timestamp}.csv'
-                filepath = os.path.join('data', 'raw', filename)
-                
-                df.to_csv(filepath, index=False, encoding='utf-8')
-                print(f"✅ フィクスチャデータを {filename} に保存しました")
         else:
-            print("データの取得に失敗しました。フィクスチャデータを生成します...")
-            fixture_data = generate_ga4_fixtures()
-            df = pd.DataFrame(fixture_data)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'ga4_data_2025-08-01_to_2025-08-31_{timestamp}.csv'
-            filepath = os.path.join('data', 'raw', filename)
-            
-            df.to_csv(filepath, index=False, encoding='utf-8')
-            print(f"✅ フィクスチャデータを {filename} に保存しました")
+            print("❌ データの取得に失敗しました")
+            print("認証情報またはGA4プロパティの設定を確認してください。")
             
     except Exception as e:
         print(f"❌ データ取得に失敗しました: {e}")
-        print("フィクスチャデータを生成します...")
-        
-        fixture_data = generate_ga4_fixtures()
-        df = pd.DataFrame(fixture_data)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f'ga4_data_2025-08-01_to_2025-08-31_{timestamp}.csv'
-        filepath = os.path.join('data', 'raw', filename)
-        
-        df.to_csv(filepath, index=False, encoding='utf-8')
-        print(f"✅ フィクスチャデータを {filename} に保存しました")
+        import traceback
+        traceback.print_exc()
+        print("エラーの詳細を確認し、認証情報とGA4プロパティの設定を見直してください。")
 
 if __name__ == "__main__":
     main()

@@ -371,7 +371,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Generate Google Ads fixture data")
     parser.add_argument("--start", default="2025-08-01", help="Start date (YYYY-MM-DD)")
-    parser.add_argument("--end", default="2025-08-30", help="End date (YYYY-MM-DD)")
+    parser.add_argument("--end", default="2025-08-31", help="End date (YYYY-MM-DD)")
     
     args = parser.parse_args()
     
