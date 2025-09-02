@@ -1,7 +1,10 @@
 # scripts/run_etl.py
-import os, datetime as dt
+import os, sys, datetime as dt
 import duckdb, pandas as pd
 from pathlib import Path
+
+# プロジェクトルートをパスに追加
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ===== Connectors（あなたの src/connectors 実装へ合わせて import を調整）=====
 from src.connectors.ga4 import fetch_ga4_daily_all

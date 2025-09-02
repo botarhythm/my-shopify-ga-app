@@ -13,14 +13,17 @@ from datetime import datetime, timedelta
 
 
 def get_db_connection():
-    """DuckDB接続を取得"""
+    """DuckDB接続を取得（読取専用）"""
     db_path = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce.duckdb")
-    return duckdb.connect(db_path)
+    con = duckdb.connect(db_path, read_only=True)
+    con.execute("PRAGMA threads=4; PRAGMA enable_object_cache=true;")
+    return con
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def load_kpi_data(start_date: str, end_date: str) -> pd.DataFrame:
     """
-    KPIデータを読み込み
+    KPIデータを読み込み（キャッシュ付き）
     
     Args:
         start_date: 開始日
@@ -36,7 +39,16 @@ def load_kpi_data(start_date: str, end_date: str) -> pd.DataFrame:
         WHERE date BETWEEN ? AND ?
         ORDER BY date
         """
-        df = con.execute(query, [start_date, end_date]).df()
+        df = con.execute(query, [start_date, end_date]).arrow().to_pandas()
+        return df
+    except duckdb.CatalogException:
+        # YoYビューが存在しない場合は通常のmart_dailyを使用
+        query = """
+        SELECT * FROM mart_daily
+        WHERE date BETWEEN ? AND ?
+        ORDER BY date
+        """
+        df = con.execute(query, [start_date, end_date]).arrow().to_pandas()
         return df
     finally:
         con.close()
