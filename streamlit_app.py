@@ -13,6 +13,7 @@ import sys
 import duckdb
 import pandas as pd
 import streamlit as st
+import subprocess
 from datetime import datetime, timedelta, date
 
 # アプリタブをインポート
@@ -23,7 +24,7 @@ from app_tabs.ads import render_ads_tab
 from app_tabs.quality import render_quality_tab
 
 # DuckDB設定
-DB = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce.duckdb")
+DB = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce_test.duckdb")
 
 @st.cache_resource
 def get_con_ro():
@@ -40,12 +41,17 @@ def _df(sql: str, params: tuple|list=()):
 @st.cache_data(ttl=300, show_spinner=False)
 def load_mart_daily(start, end):
     """日次マートデータ読み込み（キャッシュ）"""
-    return _df("""
-      SELECT *
-      FROM mart_daily
-      WHERE date BETWEEN ? AND ?
-      ORDER BY date
-    """, [str(start), str(end)])
+    try:
+        return _df("""
+          SELECT *
+          FROM mart_daily
+          WHERE date BETWEEN ? AND ?
+          ORDER BY date
+        """, [str(start), str(end)])
+    except duckdb.CatalogException:
+        # mart_dailyが存在しない場合は空のDataFrameを返す
+        st.warning("⚠️ データベーススキーマが初期化されていません。ETLスクリプトを実行してください。")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_mart_yoy(start, end):
@@ -75,7 +81,7 @@ def render_sidebar():
     st.sidebar.subheader("📅 最終更新")
     
     # DuckDBファイルの最終更新日時を取得
-    db_path = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce.duckdb")
+    db_path = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce_test.duckdb")
     if os.path.exists(db_path):
         last_modified = datetime.fromtimestamp(os.path.getmtime(db_path))
         st.sidebar.write(f"**データベース**: {last_modified.strftime('%Y-%m-%d %H:%M')}")
@@ -90,10 +96,33 @@ def render_sidebar():
     
     # データ更新ボタン
     st.sidebar.subheader("🔄 データ更新")
-    if st.sidebar.button("増分更新実行"):
-        st.sidebar.info("データ更新を開始します...")
-        # ここでデータ更新処理を実行
-        # 実際の実装では subprocess で run_incremental.py を実行
+    col1, col2 = st.sidebar.columns(2)
+    
+    with col1:
+        if st.button("スキーマ初期化"):
+            st.sidebar.info("DuckDBスキーマを初期化します...")
+            try:
+                result = subprocess.run(["python", "scripts/bootstrap_duckdb.py"], 
+                                      capture_output=True, text=True, cwd=os.getcwd())
+                if result.returncode == 0:
+                    st.sidebar.success("✅ スキーマ初期化完了")
+                else:
+                    st.sidebar.error(f"❌ エラー: {result.stderr}")
+            except Exception as e:
+                st.sidebar.error(f"❌ 実行エラー: {e}")
+    
+    with col2:
+        if st.button("増分更新実行"):
+            st.sidebar.info("データ更新を開始します...")
+            try:
+                result = subprocess.run(["python", "scripts/run_etl.py"], 
+                                      capture_output=True, text=True, cwd=os.getcwd())
+                if result.returncode == 0:
+                    st.sidebar.success("✅ データ更新完了")
+                else:
+                    st.sidebar.error(f"❌ エラー: {result.stderr}")
+            except Exception as e:
+                st.sidebar.error(f"❌ 実行エラー: {e}")
     
     st.sidebar.divider()
     
@@ -145,7 +174,33 @@ def main():
     df_yoy = load_mart_yoy(start, end)
     
     if df.empty:
-        st.warning("データがまだありません。先に ETL（scripts/run_etl.py）を実行してください。")
+        st.error("❌ データベーススキーマが初期化されていません")
+        st.info("以下の手順でデータを初期化してください：")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("""
+            **1. DuckDBスキーマ初期化**
+            ```bash
+            python scripts/bootstrap_duckdb.py
+            ```
+            """)
+        
+        with col2:
+            st.markdown("""
+            **2. ETL実行（実際のデータ取得）**
+            ```bash
+            python scripts/run_etl.py
+            ```
+            """)
+        
+        st.markdown("""
+        **3. ヘルスチェック**
+        ```bash
+        python scripts/health_check.py
+        ```
+        """)
+        
         st.stop()
     
     # タブ選択

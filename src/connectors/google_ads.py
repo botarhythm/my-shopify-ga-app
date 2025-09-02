@@ -60,7 +60,13 @@ WHERE segments.date BETWEEN '{start}' AND '{end}'
 
 def _client():
     """Google Ads クライアントを取得"""
-    return GoogleAdsClient.load_from_env(version="v17")
+    try:
+        return GoogleAdsClient.load_from_env(version="v14")
+    except:
+        try:
+            return GoogleAdsClient.load_from_env(version="v13")
+        except:
+            return GoogleAdsClient.load_from_env(version="v12")
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))

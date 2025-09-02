@@ -12,7 +12,9 @@ WHERE 1=0;
 CREATE TABLE IF NOT EXISTS core_shopify AS
 SELECT * FROM (SELECT NULL::DATE AS date, NULL::UBIGINT AS order_id, NULL::UBIGINT AS lineitem_id,
                       NULL::UBIGINT AS product_id, NULL::UBIGINT AS variant_id, NULL::VARCHAR AS sku,
-                      NULL::VARCHAR AS title, 0::BIGINT AS qty, 0.0::DOUBLE AS price, 0.0::DOUBLE AS order_total)
+                      NULL::VARCHAR AS title, 0::BIGINT AS qty, 0.0::DOUBLE AS price, 0.0::DOUBLE AS order_total,
+                      NULL::VARCHAR AS created_at, NULL::VARCHAR AS currency, 0.0::DOUBLE AS total_price,
+                      0.0::DOUBLE AS total_discounts, 0::BIGINT AS shipping_lines, 0::BIGINT AS tax_lines)
 WHERE 1=0;
 
 CREATE TABLE IF NOT EXISTS core_square AS

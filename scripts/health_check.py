@@ -2,7 +2,7 @@
 import duckdb
 import os
 
-DB = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce.duckdb")
+DB = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce_test.duckdb")
 
 def health_check():
     """DuckDBヘルスチェック"""

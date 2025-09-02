@@ -85,18 +85,23 @@ def fetch_orders_incremental(created_at_min: str, limit: int = 250) -> pd.DataFr
     rows = []
     for order in orders:
         for line_item in order.get("line_items", []):
+            # created_atをDATE型に変換
+            created_date = datetime.fromisoformat(order["created_at"].replace('Z', '+00:00')).date()
+            
             row = {
+                "date": created_date,
                 "order_id": order["id"],
-                "created_at": order["created_at"],
-                "currency": order["currency"],
-                "total_price": float(order["total_price"]),
                 "lineitem_id": line_item["id"],
                 "product_id": line_item.get("product_id"),
                 "variant_id": line_item.get("variant_id"),
                 "sku": line_item.get("sku"),
                 "title": line_item.get("title"),
-                "quantity": line_item.get("quantity"),
+                "qty": line_item.get("quantity"),
                 "price": float(line_item.get("price", 0)),
+                "order_total": float(order["total_price"]),
+                "created_at": order["created_at"],
+                "currency": order["currency"],
+                "total_price": float(order["total_price"]),
                 "total_discounts": float(order.get("total_discounts", 0)),
                 "shipping_lines": len(order.get("shipping_lines", [])),
                 "tax_lines": len(order.get("tax_lines", [])),

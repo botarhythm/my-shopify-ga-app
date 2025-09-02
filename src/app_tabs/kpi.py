@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 
 def get_db_connection():
     """DuckDB接続を取得（読取専用）"""
-    db_path = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce.duckdb")
+    db_path = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce_test.duckdb")
     con = duckdb.connect(db_path, read_only=True)
     con.execute("PRAGMA threads=4; PRAGMA enable_object_cache=true;")
     return con

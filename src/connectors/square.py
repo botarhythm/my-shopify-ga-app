@@ -119,7 +119,8 @@ def fetch_refunds(start: str, end: str) -> pd.DataFrame:
     
     while True:
         try:
-            resp = client.refunds.list_refunds(
+            # Square API v2ではlist_refundsは存在しないため、paymentsからrefundsを取得
+            resp = client.payments.list_payments(
                 begin_time=f"{start}T00:00:00Z",
                 end_time=f"{end}T23:59:59Z",
                 location_id=location_id,
@@ -133,19 +134,22 @@ def fetch_refunds(start: str, end: str) -> pd.DataFrame:
                 
             body = resp.body
             
-            for refund in body.get("refunds", []):
-                row = {
-                    "refund_id": refund["id"],
-                    "payment_id": refund["payment_id"],
-                    "created_at": refund["created_at"][:10],
-                    "amount": refund["amount_money"]["amount"] / 100,
-                    "currency": refund["amount_money"]["currency"],
-                    "status": refund.get("status"),
-                    "reason": refund.get("reason"),
-                    "location_id": refund.get("location_id"),
-                    "merchant_id": refund.get("merchant_id"),
-                }
-                rows.append(row)
+            for payment in body.get("payments", []):
+                # 支払いに関連する返金を取得
+                if payment.get("refunds"):
+                    for refund in payment["refunds"]:
+                        row = {
+                            "refund_id": refund["id"],
+                            "payment_id": payment["id"],
+                            "created_at": refund["created_at"][:10],
+                            "amount": refund["amount_money"]["amount"] / 100,
+                            "currency": refund["amount_money"]["currency"],
+                            "status": refund.get("status"),
+                            "reason": refund.get("reason"),
+                            "location_id": payment.get("location_id"),
+                            "merchant_id": payment.get("merchant_id"),
+                        }
+                        rows.append(row)
             
             cursor = body.get("cursor")
             if not cursor:
@@ -179,9 +183,11 @@ def fetch_orders(start: str, end: str) -> pd.DataFrame:
     while True:
         try:
             resp = client.orders.search_orders(
-                location_ids=[location_id],
                 query={
                     "filter": {
+                        "location_filter": {
+                            "location_ids": [location_id]
+                        },
                         "date_time_filter": {
                             "created_at": {
                                 "start_at": f"{start}T00:00:00Z",
