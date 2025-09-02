@@ -10,8 +10,10 @@ Shopify x GA4 x Square x Google Ads 統合ダッシュボード
 
 import os
 import sys
+import duckdb
+import pandas as pd
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 # アプリタブをインポート
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -19,6 +21,44 @@ from app_tabs.kpi import render_kpi_tab
 from app_tabs.details import render_details_tab
 from app_tabs.ads import render_ads_tab
 from app_tabs.quality import render_quality_tab
+
+# DuckDB設定
+DB = os.getenv("DUCKDB_PATH", "./data/duckdb/commerce.duckdb")
+
+@st.cache_resource
+def get_con_ro():
+    """読取専用DuckDB接続（キャッシュ）"""
+    con = duckdb.connect(DB, read_only=True)
+    con.execute("PRAGMA threads=4; PRAGMA enable_object_cache=true;")
+    return con
+
+def _df(sql: str, params: tuple|list=()):
+    """SQL実行→Arrow→Pandas（軽量化）"""
+    con = get_con_ro()
+    return con.execute(sql, params).arrow().to_pandas()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_mart_daily(start, end):
+    """日次マートデータ読み込み（キャッシュ）"""
+    return _df("""
+      SELECT *
+      FROM mart_daily
+      WHERE date BETWEEN ? AND ?
+      ORDER BY date
+    """, [str(start), str(end)])
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_mart_yoy(start, end):
+    """YoYデータ読み込み（キャッシュ・例外対応）"""
+    try:
+        return _df("""
+          SELECT *
+          FROM mart_daily_yoy
+          WHERE date BETWEEN ? AND ?
+          ORDER BY date
+        """, [str(start), str(end)])
+    except duckdb.CatalogException:
+        return pd.DataFrame()
 
 st.set_page_config(
     page_title="Shopify x GA4 x Square x Google Ads Dashboard", 
@@ -93,6 +133,20 @@ def main():
     
     # サイドバーを表示
     render_sidebar()
+    
+    # 期間選択UI
+    today = date.today()
+    default_start = today - timedelta(days=30)
+    start = st.sidebar.date_input("開始日", default_start)
+    end = st.sidebar.date_input("終了日", today)
+    
+    # データ読み込み（軽量化）
+    df = load_mart_daily(start, end)
+    df_yoy = load_mart_yoy(start, end)
+    
+    if df.empty:
+        st.warning("データがまだありません。先に ETL（scripts/run_etl.py）を実行してください。")
+        st.stop()
     
     # タブ選択
     tab1, tab2, tab3, tab4 = st.tabs([
