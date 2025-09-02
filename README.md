@@ -1,218 +1,228 @@
-# 🚀 Shopify x GA4 x Square x Google Ads 統合ダッシュボード
+# Shopify x GA4 x Square x Google Ads 統合ダッシュボード
 
-## 📋 プロジェクト概要
+**実データ取得による本実装版** - フィクスチャを全廃し、実データによる統合分析を実現
 
-**Shopify x GA4 x Square x Google Ads 統合ダッシュボード**は、ECサイトのマーケティング効果を包括的に測定・分析するための統合システムです。
+## 🎯 概要
 
-### 🎯 目的
-- Shopify、Google Analytics 4 (GA4)、Square POS、Google Adsの4つのデータソースを統合
-- 売上分析、顧客行動分析、マーケティングROI測定を一元化
-- データドリブンな意思決定支援システムの構築
+このプロジェクトは、Shopify、Google Analytics 4、Square、Google Adsのデータを統合し、実データ取得による包括的なマーケティング分析ダッシュボードを提供します。
 
-### 🔗 統合データソース
-- **Shopify**: ECサイトの売上・商品データ
-- **Google Analytics 4**: ウェブサイトのトラフィック・行動データ
-- **Square POS**: 実店舗の決済データ
-- **Google Ads**: 広告効果・ROASデータ
+### 主要機能
 
-## 🛠️ 技術スタック
+- **📊 KPIダッシュボード**: 総売上、セッション、CVR、ROAS、YoY比較
+- **🔍 詳細分析**: 商品別売上、流入元別効率、ページ分析
+- **📈 広告分析**: キャンペーン・キーワード効率、改善提案
+- **🔍 品質チェック**: データ品質監視、異常値検出
+- **🔄 自動同期**: 増分データ取得、リアルタイム更新
 
-### 開発環境
-- **OS**: Windows 10/11
-- **Python**: 3.13.3
-- **パッケージ管理**: pip
-- **バージョン管理**: Git
-
-### フロントエンド・UI
-- **Streamlit**: 1.37.1 - メインダッシュボードフレームワーク
-- **Plotly**: 5.23.0 - インタラクティブチャート・グラフ
-- **Altair**: 5.5.0 - データ可視化（Google Ads用）
-
-### データ処理・分析
-- **Pandas**: 2.2.3 - データ操作・分析
-- **NumPy**: 2.2.2 - 数値計算
-- **Pydantic**: 2.10.6 - データバリデーション・スキーマ定義
-
-### API統合
-- **Google Analytics Data API**: google-analytics-data 0.18.0
-- **Google Ads API**: google-ads 24.1.0
-- **Shopify Admin API**: ShopifyAPI 12.3.0
-- **Square Payments API**: squareup 40.1.0.220250220
-
-## 📁 プロジェクト構造
+## 🏗️ アーキテクチャ
 
 ```
-my-shopify-ga-app/
-├── 📁 config/                    # 設定ファイル
-│   ├── requirements.txt          # Python依存関係
-│   └── google_ads.yaml           # Google Ads設定
-├── 📁 data/                      # データフォルダ
-│   ├── 📁 raw/                   # 生データ（CSV、認証ファイル）
-│   ├── 📁 processed/             # 処理済みデータ
-│   ├── 📁 reports/              # 分析レポート
-│   └── 📁 ads/                   # Google Ads関連データ
-│       ├── 📁 raw/               # 生データ
-│       ├── 📁 processed/         # 処理済み
-│       └── 📁 cache/             # キャッシュ・フィクスチャ
-├── 📁 src/                       # ソースコード
-│   ├── 📁 extractors/            # データ抽出
-│   ├── 📁 analysis/              # データ分析
-│   ├── 📁 ads/                   # Google Ads統合
-│   ├── 📁 ga4/                   # GA4関連
-│   ├── 📁 shopify/               # Shopify関連
-│   ├── 📁 ui/                    # UI関連
-│   └── 📁 utils/                 # ユーティリティ
-├── 📁 docs/                      # ドキュメント
-├── 📁 logs/                      # ログファイル
-├── 📁 app_tabs/                  # Streamlitタブ
-├── streamlit_app.py              # メインアプリ
-└── README.md                     # このファイル
+src/
+├── connectors/          # 外部API接続
+│   ├── ga4.py          # GA4データ取得
+│   ├── google_ads.py   # Google Adsデータ取得
+│   ├── shopify.py      # Shopifyデータ取得
+│   └── square.py       # Squareデータ取得
+├── ingest/             # データ取り込み
+│   └── run_incremental.py
+├── transform/          # データ変換
+│   ├── build_core.sql  # コアテーブル構築
+│   ├── build_marts.sql # マートテーブル構築
+│   └── build_yoy.sql   # YoYテーブル構築
+├── quality/            # 品質管理
+│   ├── checks.sql      # 品質チェックSQL
+│   └── tests.py        # 品質テスト
+└── app_tabs/           # Streamlitタブ
+    ├── kpi.py          # KPIダッシュボード
+    ├── details.py      # 詳細分析
+    ├── ads.py          # 広告分析
+    └── quality.py      # 品質チェック
 ```
 
 ## 🚀 セットアップ
 
-### 1. 前提条件
-- Python 3.13.3以上
-- Git
-- 各プラットフォームのAPI認証情報
+### 1. 依存関係のインストール
 
-### 2. リポジトリクローン
-```bash
-git clone https://github.com/botarhythm/my-shopify-ga-app.git
-cd my-shopify-ga-app
-```
-
-### 3. 依存関係インストール
 ```bash
 pip install -r config/requirements.txt
 ```
 
-### 4. 環境変数設定
-`.env`ファイルを作成し、以下の認証情報を設定：
+### 2. 環境変数の設定
+
+`env.template` をコピーして `.env` ファイルを作成し、各APIの認証情報を設定してください：
+
+```bash
+cp env.template .env
+```
+
+#### 必要な環境変数
 
 ```env
-# Google Analytics 4
-GA4_PROPERTY_ID=your_ga4_property_id
-GOOGLE_APPLICATION_CREDENTIALS=path/to/service_account.json
+# === GA4 ===
+GA4_PROPERTY_ID=xxxxxxxx
+GOOGLE_APPLICATION_CREDENTIALS=./secrets/ga-sa.json
 
-# Shopify
-SHOPIFY_SHOP_URL=your_shop_url
-SHOPIFY_ACCESS_TOKEN=your_access_token
+# === Google Ads ===
+GOOGLE_ADS_DEVELOPER_TOKEN=xxxx
+GOOGLE_ADS_CLIENT_ID=xxxx.apps.googleusercontent.com
+GOOGLE_ADS_CLIENT_SECRET=xxxx
+GOOGLE_ADS_REFRESH_TOKEN=xxxx
+GOOGLE_ADS_LOGIN_CUSTOMER_ID=1234567890      # MCC (無ければ空)
+GOOGLE_ADS_CUSTOMER_ID=1234567890            # 対象アカウント
 
-# Square
-SQUARE_ACCESS_TOKEN=your_square_access_token
-SQUARE_LOCATION_ID=your_location_id
+# === Shopify ===
+SHOPIFY_SHOP_URL=your-shop.myshopify.com
+SHOPIFY_ACCESS_TOKEN=shpat_xxx
 
-# Google Ads
-GOOGLE_ADS_CLIENT_ID=your_client_id
-GOOGLE_ADS_CLIENT_SECRET=your_client_secret
-GOOGLE_ADS_DEVELOPER_TOKEN=your_developer_token
-GOOGLE_ADS_CUSTOMER_ID=your_customer_id
+# === Square ===
+SQUARE_ACCESS_TOKEN=EAAA-xxx
+SQUARE_LOCATION_ID=XXXXXXX
+
+# === DB ===
+DUCKDB_PATH=./data/duckdb/commerce.duckdb
+
+# === App ===
+DEFAULT_BACKFILL_DAYS=400   # 初回は約13ヶ月
+TIMEZONE=Asia/Tokyo
 ```
 
-### 5. フィクスチャデータ生成（テスト用）
+### 3. API認証の設定
+
+#### GA4
+1. Google Cloud Consoleでサービスアカウントを作成
+2. GA4プロパティにサービスアカウントを追加
+3. JSONキーファイルを `secrets/ga-sa.json` に保存
+
+#### Google Ads
+1. Google Ads APIアクセスを有効化
+2. OAuth2.0認証情報を作成
+3. リフレッシュトークンを取得
+
+#### Shopify
+1. プライベートアプリを作成
+2. 必要な権限を付与（Orders, Products, Customers）
+3. アクセストークンを取得
+
+#### Square
+1. Square Developer Dashboardでアプリを作成
+2. アクセストークンを取得
+3. ロケーションIDを確認
+
+## 📊 使用方法
+
+### 1. 初回データ取得（バックフィル）
+
 ```bash
-python src/ads/generate_fixtures.py --start 2025-08-01 --end 2025-08-30
+# 400日分のデータを取得
+python -m src.ingest.run_incremental --backfill --start 2024-01-01 --end 2025-09-02
 ```
 
-### 6. アプリケーション起動
+### 2. データ変換の実行
+
+```bash
+# コア・マート・YoYテーブルを構築
+python run_transform.py --all
+```
+
+### 3. Streamlitアプリの起動
+
 ```bash
 streamlit run streamlit_app.py
 ```
 
-**アクセスURL**: http://localhost:8504
+### 4. 日次同期の設定
 
-## 📊 主要機能
-
-### 1. 統合KPIダッシュボード
-- **総売上**: Shopify + Squareの統合売上
-- **セッション数**: GA4からのトラフィックデータ
-- **売上/セッション比率**: コンバージョン効率
-- **昨年同期対比**: YoY成長率分析
-
-### 2. 詳細分析機能
-- **商品別売上ランキング**: トップ商品の特定
-- **流入元別エンゲージメント**: チャネル効果測定
-- **コンテンツパフォーマンス**: ページ別分析
-- **SEO効果分析**: 検索流入の最適化
-
-### 3. Google Ads分析
-- **キャンペーン別ROAS**: 広告効果測定
-- **キーワード別パフォーマンス**: 検索キーワード分析
-- **GA4ブリッジ分析**: 広告→コンバージョン追跡
-- **日別パフォーマンス推移**: 時系列分析
-
-### 4. 自動レポート生成
-- **定期分析レポート**: 自動生成・保存
-- **クロス分析**: 複数データソース統合分析
-- **戦略提案**: AI支援の改善提案
-
-## 🔐 セキュリティ
-
-### 認証情報管理
-- **OAuth 2.0**: Google APIs用
-- **API Token**: Shopify、Square用
-- **環境変数**: 認証情報の安全な管理
-- **`.gitignore`**: 認証ファイルの除外設定
-
-### データ保護
-- **Privateリポジトリ**: セキュリティ強化
-- **認証情報除外**: Git履歴からの完全削除
-- **環境変数**: 本番環境での安全な管理
-
-## 📈 データフロー
-
-```
-1. データ抽出 (src/extractors/)
-   ↓
-2. データ処理 (src/analysis/)
-   ↓
-3. データ可視化 (Streamlit)
-   ↓
-4. レポート生成 (data/reports/)
+#### Windows Task Scheduler
+```batch
+# 毎日午前2時に実行
+schtasks /create /tn "DataSync" /tr "python -m src.ingest.run_incremental" /sc daily /st 02:00
 ```
 
-## 🧪 テスト
-
-### フィクスチャデータ
-- **期間**: 2025-08-01 〜 2025-08-30（30日間）
-- **データ量**: 
-  - キャンペーン: 240行
-  - キーワード: 720行
-  - ロールアップ: 240行
-
-### テスト実行
+#### Linux/macOS cron
 ```bash
-# フィクスチャデータ生成
-python src/ads/generate_fixtures.py --start 2025-08-01 --end 2025-08-30
-
-# 分析パイプライン実行
-python src/analysis/run_analysis_pipeline.py
+# crontab -e
+0 2 * * * cd /path/to/project && python -m src.ingest.run_incremental
 ```
 
-## 📝 開発ガイド
+## 📈 ダッシュボード機能
 
-### 新しいデータソース追加
-1. `src/extractors/`に新しい抽出スクリプトを作成
-2. `src/analysis/`に分析ロジックを追加
-3. `streamlit_app.py`にUIタブを追加
+### KPIダッシュボード
+- **総売上**: Shopify + Square の統合売上
+- **セッション数**: GA4からのトラフィック
+- **コンバージョン率**: 購入率の推移
+- **ROAS**: 広告費用対効果
+- **YoY比較**: 前年同期との比較
 
-### 新しい分析機能追加
-1. `src/analysis/`に分析スクリプトを作成
-2. `app_tabs/`にUIコンポーネントを追加
-3. メインアプリに統合
+### 詳細分析
+- **商品分析**: 売上上位商品、販売数量
+- **流入元分析**: セッション数、CVR、セッション単価
+- **ページ分析**: PV、CVR、改善提案
 
-## 🚧 制限事項・注意事項
+### 広告分析
+- **キャンペーン分析**: 費用、ROAS、CTR、CVR
+- **キーワード分析**: 除外候補、入札下げ候補
+- **改善提案**: 自動生成される具体的アクション
 
-### データファイル
-- **実際のデータファイル**: Gitにアップロードしない
-- **認証情報**: 環境変数で管理
-- **個人情報**: 適切に匿名化・暗号化
+### 品質チェック
+- **欠損データ検出**: データの完全性確認
+- **異常値検出**: 統計的異常値の特定
+- **整合性チェック**: データ間の整合性確認
+- **データ鮮度**: 最新データの確認
 
-### API制限
-- **Google Ads API**: Basic Access承認が必要
-- **レート制限**: 各APIの制限に注意
-- **データ更新**: リアルタイムではない
+## 🔧 開発・運用
+
+### データ更新
+
+```bash
+# 増分更新
+python -m src.ingest.run_incremental
+
+# 特定期間の更新
+python -m src.ingest.run_incremental --start 2025-09-01 --end 2025-09-02
+```
+
+### 品質チェック
+
+```bash
+# 品質チェック実行
+python run_transform.py --quality
+
+# 品質テスト実行
+pytest src/quality/tests.py
+```
+
+### トラブルシューティング
+
+#### よくある問題
+
+1. **データが表示されない**
+   - データ取得を実行: `python -m src.ingest.run_incremental`
+   - 変換を実行: `python run_transform.py --transform`
+
+2. **API認証エラー**
+   - 環境変数を確認: `.env` ファイルの設定
+   - トークンの有効性を確認
+
+3. **データが古い**
+   - 増分更新を実行
+   - 品質チェックタブでデータ状態を確認
+
+## 📚 技術仕様
+
+### データベース
+- **DuckDB**: 軽量な分析用データベース
+- **テーブル構造**: staging → core → marts → YoY
+
+### データフロー
+1. **取得**: 各APIからデータを取得
+2. **取り込み**: stagingテーブルに保存
+3. **変換**: core → marts → YoYテーブルを構築
+4. **可視化**: Streamlitでダッシュボード表示
+
+### 品質管理
+- **自動チェック**: SQLベースの品質チェック
+- **テスト**: pytestによる自動テスト
+- **監視**: 異常値・欠損値の自動検出
 
 ## 🤝 貢献
 
@@ -224,15 +234,16 @@ python src/analysis/run_analysis_pipeline.py
 
 ## 📄 ライセンス
 
-このプロジェクトはPrivateリポジトリです。
+このプロジェクトはMITライセンスの下で公開されています。
 
 ## 📞 サポート
 
-- **Issues**: GitHub Issuesでバグ報告・機能要望
-- **Documentation**: `docs/`フォルダ内の詳細ドキュメント
-- **Project Milestones**: `PROJECT_MILESTONES.md`で進捗確認
+問題や質問がある場合は、以下をご確認ください：
+
+1. **ドキュメント**: このREADMEファイル
+2. **品質チェック**: Streamlitアプリの品質チェックタブ
+3. **ログ**: 各スクリプトの実行ログ
 
 ---
 
-**最終更新**: 2025年1月
-**プロジェクトステータス**: フィクスチャデータテスト完了、API統合準備完了
+**開発**: Cursor AI Assistant | **バージョン**: 2.0.0 | **最終更新**: 2025-09-02
