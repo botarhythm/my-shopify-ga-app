@@ -478,7 +478,7 @@ def fetch_orders_by_created_range(start_iso: str, end_iso: str, limit: int = 250
                     refunds_total += tx_total
             row["refunds_total"] = refunds_total
             rows.append(row)
-
+    
     return pd.DataFrame(rows)
 
 
