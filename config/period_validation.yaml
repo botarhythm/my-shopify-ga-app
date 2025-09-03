@@ -1,0 +1,67 @@
+# 期間設定検証設定ファイル
+# データ収集・分析時の期間設定を検証し、不一致を検出します
+
+period_validation:
+  # 期待される期間設定
+  expected_periods:
+    august_2025:
+      start_date: "2025-08-01"
+      end_date: "2025-08-31"
+      description: "2025年8月の完全な期間"
+      required_days: 31
+    
+    september_2025:
+      start_date: "2025-09-01"
+      end_date: "2025-09-30"
+      description: "2025年9月の完全な期間"
+      required_days: 30
+  
+  # 検証ルール
+  validation_rules:
+    # 期間の完全性チェック
+    check_completeness: true
+    # 欠損日付の自動補完
+    auto_complete_missing_dates: true
+    # 警告レベルの設定
+    warning_threshold: 0.9  # 90%以上のデータが存在する場合は警告のみ
+    
+  # データソース別の検証設定
+  data_sources:
+    ga4:
+      required_columns: ["date", "sessions", "totalRevenue"]
+      date_format: "%Y-%m-%d"
+      allow_zero_values: true
+    
+    shopify:
+      required_columns: ["created_at", "total_price"]
+      date_format: "%Y-%m-%d"
+      allow_zero_values: false
+    
+    square:
+      required_columns: ["created_at", "amount_money_amount"]
+      date_format: "%Y-%m-%d"
+      allow_zero_values: false
+    
+    google_ads:
+      required_columns: ["date", "campaign_name", "cost_micros"]
+      date_format: "%Y-%m-%d"
+      allow_zero_values: true
+
+# エラーハンドリング設定
+error_handling:
+  # 期間不一致時の処理
+  period_mismatch:
+    action: "warn_and_complete"  # warn, complete, error
+    show_detailed_info: true
+    suggest_fixes: true
+  
+  # データ不足時の処理
+  data_insufficiency:
+    action: "warn"  # warn, error
+    minimum_data_ratio: 0.8  # 80%以上のデータが必要
+
+# ログ設定
+logging:
+  level: "INFO"
+  include_validation_details: true
+  save_validation_report: true

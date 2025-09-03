@@ -1,0 +1,30 @@
+# === コア依存関係 ===
+google-analytics-data==0.18.19
+google-ads==28.0.0
+google-auth
+google-auth-oauthlib
+google-auth-httplib2==0.2.0
+pandas==2.2.3
+numpy
+requests
+python-dotenv
+
+# === データベース ===
+duckdb>=0.11.0
+duckdb-engine>=0.11.0
+sqlalchemy
+
+# === 可視化 ===
+streamlit==1.37.1
+plotly==5.23.0
+altair
+
+# === API統合 ===
+ShopifyAPI==12.3.0
+squareup==40.1.0.220250220
+
+# === ユーティリティ ===
+tenacity
+pydantic
+PyYAML
+protobuf>=5.26.1,<7.0.0
