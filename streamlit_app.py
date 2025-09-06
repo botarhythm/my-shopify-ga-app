@@ -165,9 +165,11 @@ def main():
     
     # 期間選択UI
     today = date.today()
-    default_start = today - timedelta(days=30)
+    # 2025年8月をデフォルトに設定
+    default_start = date(2025, 8, 1)
+    default_end = date(2025, 8, 31)
     start = st.sidebar.date_input("開始日", default_start)
-    end = st.sidebar.date_input("終了日", today)
+    end = st.sidebar.date_input("終了日", default_end)
     
     # データ読み込み（軽量化）
     df = load_mart_daily(start, end)

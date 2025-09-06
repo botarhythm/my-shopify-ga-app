@@ -84,9 +84,21 @@ def fetch_orders_incremental(created_at_min: str, limit: int = 250) -> pd.DataFr
     # LineItems の正規化
     rows = []
     for order in orders:
+        # キャンセル注文は除外
+        if order.get("cancelled_at"):
+            continue
         for line_item in order.get("line_items", []):
             # created_atをDATE型に変換
             created_date = datetime.fromisoformat(order["created_at"].replace('Z', '+00:00')).date()
+            # 現在額（返金後）系のフィールドを優先的に取得（無ければ従来フィールド）
+            def _get_amount(obj: dict, key: str, fallback: str) -> float:
+                val = obj.get(key)
+                if isinstance(val, str) or isinstance(val, (int, float)):
+                    try:
+                        return float(val or 0)
+                    except Exception:
+                        return 0.0
+                return float(obj.get(fallback, 0) or 0)
             
             row = {
                 "date": created_date,
@@ -98,14 +110,373 @@ def fetch_orders_incremental(created_at_min: str, limit: int = 250) -> pd.DataFr
                 "title": line_item.get("title"),
                 "qty": line_item.get("quantity"),
                 "price": float(line_item.get("price", 0)),
-                "order_total": float(order["total_price"]),
+                # 代表値（注文単位の金額は注文集計で使用）
+                "order_total": _get_amount(order, "current_total_price", "total_price"),
                 "created_at": order["created_at"],
                 "currency": order["currency"],
-                "total_price": float(order["total_price"]),
-                "total_discounts": float(order.get("total_discounts", 0)),
+                "total_price": _get_amount(order, "current_total_price", "total_price"),
+                "subtotal_price": _get_amount(order, "current_subtotal_price", "subtotal_price"),
+                "total_line_items_price": float(order.get("total_line_items_price", 0) or 0),
+                "total_discounts": _get_amount(order, "current_total_discounts", "total_discounts"),
+                "total_tax": _get_amount(order, "current_total_tax", "total_tax"),
+                "total_tip": float(order.get("total_tip_received", 0) or 0),
+                "shipping_price": sum([float((s.get("price_set",{}).get("shop_money",{}).get("amount") or s.get("price", 0) or 0)) for s in order.get("shipping_lines", [])]) if order.get("shipping_lines") else 0.0,
                 "shipping_lines": len(order.get("shipping_lines", [])),
                 "tax_lines": len(order.get("tax_lines", [])),
+                "financial_status": order.get("financial_status"),
+                "cancelled_at": order.get("cancelled_at"),
             }
+            
+            # 返金合計（存在すれば合算）
+            refunds_total = 0.0
+            for refund in order.get("refunds", []) or []:
+                # transactionsのamount優先、無ければrefund_line_itemsの合計＋shippingの合計
+                tx_total = 0.0
+                for tx in refund.get("transactions", []) or []:
+                    try:
+                        tx_total += float(tx.get("amount", 0) or 0)
+                    except Exception:
+                        pass
+                if tx_total == 0.0:
+                    line_total = 0.0
+                    for rli in refund.get("refund_line_items", []) or []:
+                        adj = rli.get("subtotal", None)
+                        if adj is not None:
+                            try:
+                                line_total += float(adj)
+                            except Exception:
+                                pass
+                    ship_total = 0.0
+                    if refund.get("shipping") and refund["shipping"].get("amount"):
+                        try:
+                            ship_total = float(refund["shipping"]["amount"]) or 0
+                        except Exception:
+                            pass
+                    refunds_total += (line_total + ship_total)
+                else:
+                    refunds_total += tx_total
+            row["refunds_total"] = refunds_total
+            rows.append(row)
+    
+    return pd.DataFrame(rows)
+
+
+def fetch_orders_by_processed_range(start_iso: str, end_iso: str, limit: int = 250, financial_statuses: Optional[list] = None) -> pd.DataFrame:
+    """
+    処理日時(processed_at)のJST範囲で注文を取得
+    Args:
+        start_iso: 例 "2025-08-01T00:00:00+09:00"
+        end_iso:   例 "2025-08-31T23:59:59+09:00"
+        limit: 取得上限/ページ
+    Returns:
+        DataFrame: 正規化された注文・商品データ
+    """
+    base_url = _get_base_url()
+    if financial_statuses is None:
+        financial_statuses = ["paid"]
+    fs_param = ",".join(financial_statuses)
+    url = (
+        f"{base_url}/orders.json?status=any&limit={limit}"
+        f"&processed_at_min={start_iso}&processed_at_max={end_iso}"
+        f"&financial_status={fs_param}"
+    )
+
+    orders: List[dict] = []
+    while True:
+        try:
+            data = _make_request(url)
+            batch_orders = data.get("orders", [])
+            orders.extend(batch_orders)
+
+            link_header = requests.get(url, headers=_get_headers()).headers.get("Link", "")
+            next_url = _extract_next_url(link_header)
+            if not next_url:
+                break
+            url = next_url
+        except Exception as e:
+            print(f"Shopify API エラー: {e}")
+            break
+
+    # 正規化（fetch_orders_incremental と同様）
+    rows: List[dict] = []
+    for order in orders:
+        if order.get("cancelled_at"):
+            continue
+        for line_item in order.get("line_items", []):
+            created_date = datetime.fromisoformat(order["created_at"].replace('Z', '+00:00')).date()
+            def _get_amount(obj: dict, key: str, fallback: str) -> float:
+                val = obj.get(key)
+                if isinstance(val, str) or isinstance(val, (int, float)):
+                    try:
+                        return float(val or 0)
+                    except Exception:
+                        return 0.0
+                return float(obj.get(fallback, 0) or 0)
+            row = {
+                "date": created_date,
+                "order_id": order["id"],
+                "lineitem_id": line_item["id"],
+                "product_id": line_item.get("product_id"),
+                "variant_id": line_item.get("variant_id"),
+                "sku": line_item.get("sku"),
+                "title": line_item.get("title"),
+                "qty": line_item.get("quantity"),
+                "price": float(line_item.get("price", 0)),
+                "order_total": _get_amount(order, "current_total_price", "total_price"),
+                "created_at": order["created_at"],
+                "processed_at": order.get("processed_at"),
+                "paid_at": order.get("paid_at"),
+                "currency": order["currency"],
+                "total_price": _get_amount(order, "current_total_price", "total_price"),
+                "subtotal_price": _get_amount(order, "current_subtotal_price", "subtotal_price"),
+                "total_line_items_price": float(order.get("total_line_items_price", 0) or 0),
+                "total_discounts": _get_amount(order, "current_total_discounts", "total_discounts"),
+                "total_tax": _get_amount(order, "current_total_tax", "total_tax"),
+                "total_tip": float(order.get("total_tip_received", 0) or 0),
+                "shipping_price": sum([float((s.get("price_set",{}).get("shop_money",{}).get("amount") or s.get("price", 0) or 0)) for s in order.get("shipping_lines", [])]) if order.get("shipping_lines") else 0.0,
+                "shipping_lines": len(order.get("shipping_lines", [])),
+                "tax_lines": len(order.get("tax_lines", [])),
+                "financial_status": order.get("financial_status"),
+                "cancelled_at": order.get("cancelled_at"),
+            }
+            refunds_total = 0.0
+            for refund in order.get("refunds", []) or []:
+                tx_total = 0.0
+                for tx in refund.get("transactions", []) or []:
+                    try:
+                        tx_total += float(tx.get("amount", 0) or 0)
+                    except Exception:
+                        pass
+                if tx_total == 0.0:
+                    line_total = 0.0
+                    for rli in refund.get("refund_line_items", []) or []:
+                        adj = rli.get("subtotal", None)
+                        if adj is not None:
+                            try:
+                                line_total += float(adj)
+                            except Exception:
+                                pass
+                    ship_total = 0.0
+                    if refund.get("shipping") and refund["shipping"].get("amount"):
+                        try:
+                            ship_total = float(refund["shipping"]["amount"]) or 0
+                        except Exception:
+                            pass
+                    refunds_total += (line_total + ship_total)
+                else:
+                    refunds_total += tx_total
+            row["refunds_total"] = refunds_total
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def fetch_orders_by_paid_range(start_iso: str, end_iso: str, limit: int = 250, financial_statuses: Optional[list] = None) -> pd.DataFrame:
+    """
+    支払日時(paid_at)のJST範囲で注文を取得
+    Args:
+        start_iso: 例 "2025-08-01T00:00:00+09:00"
+        end_iso:   例 "2025-08-31T23:59:59+09:00"
+        limit: 取得上限/ページ
+        financial_statuses: 対象とするfinancial_statusリスト（デフォルト['paid']）
+    Returns:
+        DataFrame: 正規化された注文・商品データ
+    """
+    base_url = _get_base_url()
+    if financial_statuses is None:
+        financial_statuses = ["paid"]
+    fs_param = ",".join(financial_statuses)
+    url = (
+        f"{base_url}/orders.json?status=any&limit={limit}"
+        f"&paid_at_min={start_iso}&paid_at_max={end_iso}"
+        f"&financial_status={fs_param}"
+    )
+
+    orders: List[dict] = []
+    while True:
+        try:
+            data = _make_request(url)
+            batch_orders = data.get("orders", [])
+            orders.extend(batch_orders)
+            link_header = requests.get(url, headers=_get_headers()).headers.get("Link", "")
+            next_url = _extract_next_url(link_header)
+            if not next_url:
+                break
+            url = next_url
+        except Exception as e:
+            print(f"Shopify API エラー: {e}")
+            break
+
+    rows: List[dict] = []
+    for order in orders:
+        if order.get("cancelled_at"):
+            continue
+        for line_item in order.get("line_items", []):
+            created_date = datetime.fromisoformat(order["created_at"].replace('Z', '+00:00')).date()
+            def _get_amount(obj: dict, key: str, fallback: str) -> float:
+                val = obj.get(key)
+                if isinstance(val, str) or isinstance(val, (int, float)):
+                    try:
+                        return float(val or 0)
+                    except Exception:
+                        return 0.0
+                return float(obj.get(fallback, 0) or 0)
+            row = {
+                "date": created_date,
+                "order_id": order["id"],
+                "lineitem_id": line_item["id"],
+                "product_id": line_item.get("product_id"),
+                "variant_id": line_item.get("variant_id"),
+                "sku": line_item.get("sku"),
+                "title": line_item.get("title"),
+                "qty": line_item.get("quantity"),
+                "price": float(line_item.get("price", 0)),
+                "order_total": _get_amount(order, "current_total_price", "total_price"),
+                "created_at": order["created_at"],
+                "processed_at": order.get("processed_at"),
+                "paid_at": order.get("paid_at"),
+                "currency": order["currency"],
+                "total_price": _get_amount(order, "current_total_price", "total_price"),
+                "subtotal_price": _get_amount(order, "current_subtotal_price", "subtotal_price"),
+                "total_line_items_price": float(order.get("total_line_items_price", 0) or 0),
+                "total_discounts": _get_amount(order, "current_total_discounts", "total_discounts"),
+                "total_tax": _get_amount(order, "current_total_tax", "total_tax"),
+                "total_tip": float(order.get("total_tip_received", 0) or 0),
+                "shipping_price": sum([float((s.get("price_set",{}).get("shop_money",{}).get("amount") or s.get("price", 0) or 0)) for s in order.get("shipping_lines", [])]) if order.get("shipping_lines") else 0.0,
+                "shipping_lines": len(order.get("shipping_lines", [])),
+                "tax_lines": len(order.get("tax_lines", [])),
+                "financial_status": order.get("financial_status"),
+                "cancelled_at": order.get("cancelled_at"),
+            }
+            refunds_total = 0.0
+            for refund in order.get("refunds", []) or []:
+                tx_total = 0.0
+                for tx in refund.get("transactions", []) or []:
+                    try:
+                        tx_total += float(tx.get("amount", 0) or 0)
+                    except Exception:
+                        pass
+                if tx_total == 0.0:
+                    line_total = 0.0
+                    for rli in refund.get("refund_line_items", []) or []:
+                        adj = rli.get("subtotal", None)
+                        if adj is not None:
+                            try:
+                                line_total += float(adj)
+                            except Exception:
+                                pass
+                    ship_total = 0.0
+                    if refund.get("shipping") and refund["shipping"].get("amount"):
+                        try:
+                            ship_total = float(refund["shipping"]["amount"]) or 0
+                        except Exception:
+                            pass
+                    refunds_total += (line_total + ship_total)
+                else:
+                    refunds_total += tx_total
+            row["refunds_total"] = refunds_total
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def fetch_orders_by_created_range(start_iso: str, end_iso: str, limit: int = 250, financial_statuses: Optional[list] = None) -> pd.DataFrame:
+    """
+    作成日時(created_at)のJST範囲で注文を取得
+    """
+    base_url = _get_base_url()
+    if financial_statuses is None:
+        financial_statuses = ["paid"]
+    fs_param = ",".join(financial_statuses)
+    url = (
+        f"{base_url}/orders.json?status=any&limit={limit}"
+        f"&created_at_min={start_iso}&created_at_max={end_iso}"
+        f"&financial_status={fs_param}"
+    )
+
+    orders: List[dict] = []
+    while True:
+        try:
+            data = _make_request(url)
+            batch_orders = data.get("orders", [])
+            orders.extend(batch_orders)
+            link_header = requests.get(url, headers=_get_headers()).headers.get("Link", "")
+            next_url = _extract_next_url(link_header)
+            if not next_url:
+                break
+            url = next_url
+        except Exception as e:
+            print(f"Shopify API エラー: {e}")
+            break
+
+    rows: List[dict] = []
+    for order in orders:
+        if order.get("cancelled_at"):
+            continue
+        for line_item in order.get("line_items", []):
+            created_date = datetime.fromisoformat(order["created_at"].replace('Z', '+00:00')).date()
+            def _get_amount(obj: dict, key: str, fallback: str) -> float:
+                val = obj.get(key)
+                if isinstance(val, str) or isinstance(val, (int, float)):
+                    try:
+                        return float(val or 0)
+                    except Exception:
+                        return 0.0
+                return float(obj.get(fallback, 0) or 0)
+            row = {
+                "date": created_date,
+                "order_id": order["id"],
+                "lineitem_id": line_item["id"],
+                "product_id": line_item.get("product_id"),
+                "variant_id": line_item.get("variant_id"),
+                "sku": line_item.get("sku"),
+                "title": line_item.get("title"),
+                "qty": line_item.get("quantity"),
+                "price": float(line_item.get("price", 0)),
+                "order_total": _get_amount(order, "current_total_price", "total_price"),
+                "created_at": order["created_at"],
+                "processed_at": order.get("processed_at"),
+                "paid_at": order.get("paid_at"),
+                "currency": order["currency"],
+                "total_price": _get_amount(order, "current_total_price", "total_price"),
+                "subtotal_price": _get_amount(order, "current_subtotal_price", "subtotal_price"),
+                "total_line_items_price": float(order.get("total_line_items_price", 0) or 0),
+                "total_discounts": _get_amount(order, "current_total_discounts", "total_discounts"),
+                "total_tax": _get_amount(order, "current_total_tax", "total_tax"),
+                "total_tip": float(order.get("total_tip_received", 0) or 0),
+                "shipping_price": sum([float((s.get("price_set",{}).get("shop_money",{}).get("amount") or s.get("price", 0) or 0)) for s in order.get("shipping_lines", [])]) if order.get("shipping_lines") else 0.0,
+                "shipping_lines": len(order.get("shipping_lines", [])),
+                "tax_lines": len(order.get("tax_lines", [])),
+                "financial_status": order.get("financial_status"),
+                "cancelled_at": order.get("cancelled_at"),
+            }
+            refunds_total = 0.0
+            for refund in order.get("refunds", []) or []:
+                tx_total = 0.0
+                for tx in refund.get("transactions", []) or []:
+                    try:
+                        tx_total += float(tx.get("amount", 0) or 0)
+                    except Exception:
+                        pass
+                if tx_total == 0.0:
+                    line_total = 0.0
+                    for rli in refund.get("refund_line_items", []) or []:
+                        adj = rli.get("subtotal", None)
+                        if adj is not None:
+                            try:
+                                line_total += float(adj)
+                            except Exception:
+                                pass
+                    ship_total = 0.0
+                    if refund.get("shipping") and refund["shipping"].get("amount"):
+                        try:
+                            ship_total = float(refund["shipping"]["amount"]) or 0
+                        except Exception:
+                            pass
+                    refunds_total += (line_total + ship_total)
+                else:
+                    refunds_total += tx_total
+            row["refunds_total"] = refunds_total
             rows.append(row)
     
     return pd.DataFrame(rows)

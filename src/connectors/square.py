@@ -60,10 +60,18 @@ def fetch_payments(start: str, end: str) -> pd.DataFrame:
             body = resp.body
             
             for payment in body.get("payments", []):
+                # 金額の変換（通貨最小単位 → 通貨単位）
+                def _to_major_units(amount_minor: int, currency_code: str) -> float:
+                    # Squareのamountは最小単位。JPYは小数なし（そのまま）。その他は100で割る
+                    if currency_code == "JPY":
+                        return float(amount_minor)
+                    return float(amount_minor) / 100.0
+
                 row = {
+                    "date": payment["created_at"][:10],  # 日付部分のみ抽出
                     "payment_id": payment["id"],
                     "created_at": payment["created_at"][:10],  # 日付部分のみ抽出
-                    "amount": payment["amount_money"]["amount"] / 100,  # セントからドルに変換
+                    "amount": _to_major_units(payment["amount_money"]["amount"], payment["amount_money"]["currency"]),
                     "currency": payment["amount_money"]["currency"],
                     "card_brand": payment.get("card_details", {}).get("card", {}).get("card_brand"),
                     "status": payment.get("status"),
@@ -71,6 +79,10 @@ def fetch_payments(start: str, end: str) -> pd.DataFrame:
                     "order_id": payment.get("order_id"),
                     "location_id": payment.get("location_id"),
                     "merchant_id": payment.get("merchant_id"),
+                    "card_type": None,
+                    "card_fingerprint": None,
+                    "entry_method": None,
+                    "processing_fee": None,
                 }
                 
                 # 追加の支払い詳細情報
@@ -82,9 +94,18 @@ def fetch_payments(start: str, end: str) -> pd.DataFrame:
                         "entry_method": card_details.get("entry_method"),
                     })
                 
-                # 手数料情報
+                # 手数料情報（配列で返る場合があるため合算）
                 if payment.get("processing_fee"):
-                    row["processing_fee"] = payment["processing_fee"]["amount_money"]["amount"] / 100
+                    fees = payment["processing_fee"]
+                    total_fee_minor = 0
+                    if isinstance(fees, list):
+                        for fee in fees:
+                            amt = fee.get("amount_money", {}).get("amount", 0)
+                            total_fee_minor += int(amt)
+                        row["processing_fee"] = _to_major_units(total_fee_minor, payment["amount_money"]["currency"])
+                    elif isinstance(fees, dict):
+                        amt = fees.get("amount_money", {}).get("amount", 0)
+                        row["processing_fee"] = _to_major_units(int(amt), payment["amount_money"]["currency"])
                 
                 rows.append(row)
             

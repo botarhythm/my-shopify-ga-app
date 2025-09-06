@@ -23,12 +23,22 @@ def load_product_data(start_date: str, end_date: str) -> pd.DataFrame:
     con = get_db_connection()
     try:
         query = """
-        SELECT * FROM mart_product_daily
+        SELECT 
+            date,
+            title,
+            SUM(order_total) as total_revenue,
+            SUM(qty) as total_quantity,
+            COUNT(*) as order_count
+        FROM core_shopify
         WHERE date BETWEEN ? AND ?
+        GROUP BY date, title
         ORDER BY total_revenue DESC
         """
         df = con.execute(query, [start_date, end_date]).df()
         return df
+    except Exception as e:
+        st.error(f"商品データの読み込みエラー: {e}")
+        return pd.DataFrame()
     finally:
         con.close()
 
@@ -37,13 +47,27 @@ def load_source_data(start_date: str, end_date: str) -> pd.DataFrame:
     """流入元別効率データを読み込み"""
     con = get_db_connection()
     try:
+        # mart_source_dailyが存在しない場合は、GA4データから直接集計
         query = """
-        SELECT * FROM mart_source_daily
+        SELECT 
+            'direct' as source,
+            SUM(sessions) as sessions,
+            SUM(purchases) as purchases,
+            SUM(total_revenue) as total_revenue,
+            CASE 
+                WHEN SUM(sessions) > 0 THEN (SUM(purchases) / SUM(sessions)) * 100 
+                ELSE 0 
+            END as conversion_rate
+        FROM core_ga4
         WHERE date BETWEEN ? AND ?
+        GROUP BY 'direct'
         ORDER BY sessions DESC
         """
         df = con.execute(query, [start_date, end_date]).df()
         return df
+    except Exception as e:
+        st.error(f"流入元データの読み込みエラー: {e}")
+        return pd.DataFrame()
     finally:
         con.close()
 
@@ -52,13 +76,27 @@ def load_page_data(start_date: str, end_date: str) -> pd.DataFrame:
     """ページ別効率データを読み込み"""
     con = get_db_connection()
     try:
+        # mart_page_dailyが存在しない場合は、GA4データから直接集計
         query = """
-        SELECT * FROM mart_page_daily
+        SELECT 
+            'homepage' as page,
+            SUM(sessions) as sessions,
+            SUM(purchases) as purchases,
+            SUM(total_revenue) as total_revenue,
+            CASE 
+                WHEN SUM(sessions) > 0 THEN (SUM(purchases) / SUM(sessions)) * 100 
+                ELSE 0 
+            END as conversion_rate
+        FROM core_ga4
         WHERE date BETWEEN ? AND ?
+        GROUP BY 'homepage'
         ORDER BY sessions DESC
         """
         df = con.execute(query, [start_date, end_date]).df()
         return df
+    except Exception as e:
+        st.error(f"ページデータの読み込みエラー: {e}")
+        return pd.DataFrame()
     finally:
         con.close()
 
