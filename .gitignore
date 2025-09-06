@@ -48,6 +48,14 @@ logs/
 !PROJECT_MILESTONES.md
 !docs/*.md
 
+# Database files
+*.duckdb
+*.db
+*.sqlite
+*.sqlite3
+data/duckdb/
+data/processed/
+
 # Environment variables
 .env
 .env.local
