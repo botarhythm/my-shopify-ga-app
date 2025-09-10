@@ -1,6 +1,6 @@
 # Shopify x GA4 x Square x Google Ads 統合ダッシュボード
 
-**実データ取得による本実装版** - フィクスチャを全廃し、実データによる統合分析を実現
+**実データ取得による本実装版** - 全API統合完了、本格運用開始
 
 ## 🎯 概要
 
@@ -110,18 +110,18 @@ TIMEZONE=Asia/Tokyo
 
 ## 📊 使用方法
 
-### 1. 初回データ取得（バックフィル）
+### 1. データベース初期化
 
 ```bash
-# 400日分のデータを取得
-python -m src.ingest.run_incremental --backfill --start 2024-01-01 --end 2025-09-02
+# DuckDBデータベースの初期化
+python scripts/bootstrap_duckdb.py
 ```
 
-### 2. データ変換の実行
+### 2. データ取得・変換の実行
 
 ```bash
-# コア・マート・YoYテーブルを構築
-python run_transform.py --all
+# ETLパイプラインの実行（データ取得・変換・統合）
+python scripts/run_etl.py
 ```
 
 ### 3. Streamlitアプリの起動
@@ -135,13 +135,13 @@ streamlit run streamlit_app.py
 #### Windows Task Scheduler
 ```batch
 # 毎日午前2時に実行
-schtasks /create /tn "DataSync" /tr "python -m src.ingest.run_incremental" /sc daily /st 02:00
+schtasks /create /tn "DataSync" /tr "python scripts/run_etl.py" /sc daily /st 02:00
 ```
 
 #### Linux/macOS cron
 ```bash
 # crontab -e
-0 2 * * * cd /path/to/project && python -m src.ingest.run_incremental
+0 2 * * * cd /path/to/project && python scripts/run_etl.py
 ```
 
 ## 📈 ダッシュボード機能
@@ -174,18 +174,18 @@ schtasks /create /tn "DataSync" /tr "python -m src.ingest.run_incremental" /sc d
 ### データ更新
 
 ```bash
-# 増分更新
-python -m src.ingest.run_incremental
+# 全データ更新
+python scripts/run_etl.py
 
-# 特定期間の更新
-python -m src.ingest.run_incremental --start 2025-09-01 --end 2025-09-02
+# データベース状態確認
+python scripts/health_check.py
 ```
 
 ### 品質チェック
 
 ```bash
-# 品質チェック実行
-python run_transform.py --quality
+# データベース状態確認
+python scripts/health_check.py
 
 # 品質テスト実行
 pytest src/quality/tests.py
@@ -196,15 +196,15 @@ pytest src/quality/tests.py
 #### よくある問題
 
 1. **データが表示されない**
-   - データ取得を実行: `python -m src.ingest.run_incremental`
-   - 変換を実行: `python run_transform.py --transform`
+   - データベース初期化: `python scripts/bootstrap_duckdb.py`
+   - ETLパイプライン実行: `python scripts/run_etl.py`
 
 2. **API認証エラー**
    - 環境変数を確認: `.env` ファイルの設定
    - トークンの有効性を確認
 
 3. **データが古い**
-   - 増分更新を実行
+   - ETLパイプライン実行: `python scripts/run_etl.py`
    - 品質チェックタブでデータ状態を確認
 
 ## 📚 技術仕様
@@ -246,4 +246,4 @@ pytest src/quality/tests.py
 
 ---
 
-**開発**: Cursor AI Assistant | **バージョン**: 2.0.0 | **最終更新**: 2025-09-02
+**開発**: Cursor AI Assistant | **バージョン**: 2.1.0 | **最終更新**: 2025-09-03
