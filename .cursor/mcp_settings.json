@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "dev3000": {
+      "command": "python",
+      "args": ["src/debug/mcp_server.py", "--port", "3684"],
+      "env": {
+        "PYTHONPATH": "."
+      }
+    }
+  }
+}
+

@@ -39,14 +39,15 @@ Thumbs.db
 # Project specific
 data/raw/*.json
 data/raw/token.pickle
+data/*.pickle
 data/ads/cache/
 logs/
 *.png
 *.csv
-*.md
 !README.md
 !PROJECT_MILESTONES.md
 !docs/*.md
+!src/seeds/*.csv
 
 # Database files
 *.duckdb
@@ -64,3 +65,10 @@ data/processed/
 *.tmp
 *.temp
 
+# Debug and Test Scripts
+debug_*.py
+verify_*.py
+test_*.py
+run_manual_etl.py
+inspect_products.py
+run_etl_verify.py

@@ -1,0 +1,10 @@
+streamlit
+pandas
+duckdb
+plotly
+python-dotenv
+requests
+tenacity
+google-analytics-data
+google-ads
+square

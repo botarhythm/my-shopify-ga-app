@@ -1,0 +1,16 @@
+Verifying imports...
+OK: Settings imported
+OK: Database imported
+OK: Shopify Client imported
+OK: Square Client imported
+Service Account load failed (might be OAuth secret): Service account info was not in the expected format, missing fields token_uri, client_email.
+OK: GA4 Client imported
+OK: Google Ads Client imported
+OK: ETL Service imported
+OK: UI Components imported
+
+Verifying Database Initialization...
+Initializing database schemas...
+OK: Database initialized successfully
+
+All checks passed!
